@@ -1,10 +1,15 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { useAuth } from '@/composables/useAuth'
 import AppSidebar from '@/components/AppSidebar.vue'
 import AppHeader from '@/components/AppHeader.vue'
 
 const route = useRoute()
+const { logout } = useAuth()
+
+// Hide sidebar/header on login page
+const showLayout = computed(() => !route.meta.public)
 
 // Responsive sidebar state
 const isMobile = ref(false)
@@ -17,8 +22,7 @@ function checkViewport() {
   const width = window.innerWidth
   isMobile.value = width <= 768
   isTablet.value = width > 768 && width <= 1024
-  
-  // Auto-collapse on tablet, auto-close mobile
+
   if (isMobile.value) {
     mobileMenuOpen.value = false
     sidebarCollapsed.value = false
@@ -47,7 +51,12 @@ function closeMobileMenu() {
   mobileMenuOpen.value = false
 }
 
+function handleLogout() {
+  logout()
+}
+
 const mainContentClass = computed(() => {
+  if (!showLayout.value) return 'full-page'
   if (isMobile.value) return ''
   if (isTablet.value) return tabletExpanded.value ? 'sidebar-expanded' : ''
   return sidebarCollapsed.value ? 'sidebar-collapsed' : ''
@@ -72,13 +81,20 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="app-container">
+  <!-- Login Page: No layout, just router-view -->
+  <template v-if="!showLayout">
+    <router-view />
+  </template>
+
+  <!-- Authenticated Pages: Full layout with sidebar + header -->
+  <div v-else class="app-container">
     <AppSidebar 
       :collapsed="isTablet ? !tabletExpanded : sidebarCollapsed"
       :mobileOpen="mobileMenuOpen"
       @toggle="toggleSidebar"
+      @logout="handleLogout"
     />
-    
+
     <div 
       class="mobile-overlay" 
       :class="{ active: mobileMenuOpen }"
@@ -89,8 +105,9 @@ onUnmounted(() => {
       <AppHeader 
         :title="pageTitle" 
         @toggle-sidebar="toggleSidebar"
+        @logout="handleLogout"
       />
-      
+
       <main class="page-content">
         <router-view v-slot="{ Component }">
           <transition name="fade" mode="out-in">
@@ -103,6 +120,12 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* Full page for login */
+:global(body) {
+  margin: 0;
+  padding: 0;
+}
+
 .fade-enter-active,
 .fade-leave-active {
   transition: opacity 0.2s ease;

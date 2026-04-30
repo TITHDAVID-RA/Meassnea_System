@@ -12,6 +12,7 @@ const defaultExpenseCategories = [
   { id: '6', name: 'តែប្រម៉ូត' },
   { id: '7', name: 'ការធ្វើដំណើរ' },
   { id: '8', name: 'ស្តុកទំនិញ' },
+  { id: '9', name: 'វត្ថុធាតុដើម' }
 ]
 
 export const useExpenseStore = defineStore('expense', () => {

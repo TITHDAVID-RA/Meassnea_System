@@ -3,12 +3,14 @@ import { ref, computed } from 'vue'
 import { useIncomeStore } from '@/stores/incomeStore'
 import { useExpenseStore } from '@/stores/expenseStore'
 import { useOrderStore } from '@/stores/orderStore'
+import { useStockStore } from '@/stores/stockStore'
 import { useFormatters } from '@/composables/useFormatters'
 import StatCard from '@/components/StatCard.vue'
 
 const incomeStore = useIncomeStore()
 const expenseStore = useExpenseStore()
 const orderStore = useOrderStore()
+const stockStore = useStockStore()
 const { formatCurrency } = useFormatters()
 
 // Date range filter
@@ -27,18 +29,29 @@ function isWithinRange(dateStr, start, end) {
 
 // ========== FILTERED DATA ==========
 const filteredIncomes = computed(() => {
-  return incomeStore.incomes.filter(i => isWithinRange(i.date, startDate.value, endDate.value))
+  return incomeStore.incomes.filter((i) => isWithinRange(i.date, startDate.value, endDate.value))
 })
 
 const filteredExpenses = computed(() => {
-  return expenseStore.expenses.filter(e => isWithinRange(e.date, startDate.value, endDate.value))
+  return expenseStore.expenses.filter((e) => isWithinRange(e.date, startDate.value, endDate.value))
 })
 
 const filteredOrders = computed(() => {
-  return orderStore.orders.filter(o => 
-    isWithinRange(o.date, startDate.value, endDate.value) && 
-    o.status === 'completed' // Only include completed orders
+  return orderStore.orders.filter(
+    (o) => isWithinRange(o.date, startDate.value, endDate.value) && o.status === 'completed', // Only include completed orders
   )
+})
+
+// ========== STOCK BY SIZE ==========
+const stockBySize = computed(() => {
+  const sizes = { S: 0, M: 0, L: 0 }
+  stockStore.stockItems.forEach((item) => {
+    const size = stockStore.getSizeFromProductName(item.name)
+    if (size && sizes[size] !== undefined) {
+      sizes[size] += item.quantity
+    }
+  })
+  return sizes
 })
 
 // ========== SUMMARY ==========
@@ -59,11 +72,11 @@ function clearFilters() {
 
 <template>
   <div class="page">
-    <div class="page-header" style="flex-wrap: wrap; justify-content: end; gap: 1rem;">
+    <div class="page-header" style="flex-wrap: wrap; justify-content: end; gap: 1rem">
       <div class="filter-actions">
-        <input type="date" v-model="startDate" class="filter-input">
-        <span style="color: var(--text-secondary);">to</span>
-        <input type="date" v-model="endDate" class="filter-input">
+        <input type="date" v-model="startDate" class="filter-input" />
+        <span style="color: var(--text-secondary)">to</span>
+        <input type="date" v-model="endDate" class="filter-input" />
         <button v-if="startDate || endDate" class="btn btn-secondary" @click="clearFilters">
           <i class="fas fa-times"></i> Clear
         </button>
@@ -71,29 +84,41 @@ function clearFilters() {
     </div>
 
     <div class="stats-grid">
-      <StatCard 
-        icon="fas fa-arrow-trend-up" 
-        label="ចំណូលសរុប" 
-        :value="formatCurrency(totalIncome)" 
-        bg-class="bg-success" 
+      <StatCard
+        icon="fas fa-arrow-trend-up"
+        label="ចំណូលសរុប"
+        :value="formatCurrency(totalIncome)"
+        bg-class="bg-success"
       />
-      <StatCard 
-        icon="fas fa-arrow-trend-down" 
-        label="ចំណាយសរុប" 
-        :value="formatCurrency(totalExpense)" 
-        bg-class="bg-danger" 
+      <StatCard
+        icon="fas fa-arrow-trend-down"
+        label="ចំណាយសរុប"
+        :value="formatCurrency(totalExpense)"
+        bg-class="bg-danger"
       />
-      <StatCard 
-        icon="fas fa-sack-dollar" 
-        label="តម្លៃការកម្មង់ (ជោគជ័យ)" 
-        :value="formatCurrency(totalOrderValue)" 
-        bg-class="bg-primary" 
+      <StatCard
+        icon="fas fa-shopping-basket"
+        label="ចំនួនការកម្មង់ (ជោគជ័យ)"
+        :value="totalOrderCount"
+        bg-class="bg-warning"
       />
-      <StatCard 
-        icon="fas fa-shopping-basket" 
-        label="ចំនួនការកម្មង់ (ជោគជ័យ)" 
-        :value="totalOrderCount" 
-        bg-class="bg-warning" 
+      <StatCard
+        icon="fas fa-box"
+        label="ស្តុក S (តូច)"
+        :value="stockBySize.S"
+        bg-class="bg-info"
+      />
+      <StatCard
+        icon="fas fa-box-open"
+        label="ស្តុក M (មធ្យម)"
+        :value="stockBySize.M"
+        bg-class="bg-primary"
+      />
+      <StatCard
+        icon="fas fa-boxes-stacked"
+        label="ស្តុក L (ធំ)"
+        :value="stockBySize.L"
+        bg-class="bg-secondary"
       />
     </div>
   </div>
@@ -102,7 +127,7 @@ function clearFilters() {
 <style scoped>
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 1.5rem;
   margin-top: 1rem;
 }

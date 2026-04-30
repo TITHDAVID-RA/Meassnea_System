@@ -1,0 +1,8 @@
+name = "your-project-name"
+main = "src/main.js" 
+compatibility_date = "2026-04-28"
+
+[[d1_databases]]
+binding = "meassnea_db" 
+database_name = "meassnea-db"
+database_id = "2a168fee-2291-432a-9643-bfcfb1ea1fed"

@@ -17,25 +17,18 @@ export const useOrderStore = defineStore('order', () => {
       .reduce((sum, o) => sum + o.items.reduce((is, item) => is + item.quantity, 0), 0)
   )
 
-function updateOrder(id, data) {
-  const index = this.orders.findIndex(o => o.id === id)
-  if (index !== -1) {
-    this.orders[index] = { ...this.orders[index], ...data }
-  }
-}
-
   function createOrder(orderData) {
-  const newOrder = {
-    id: generateId(),
-    orderNumber: generateOrderNumber(orders.value.length), // Pass current orders to generate unique order number
-    createdAt: new Date(),
-    // Move status above ...orderData so it acts as a default only
-    status: 'pending', 
-    ...orderData, 
+    const newOrder = {
+      id: generateId(),
+      orderNumber: generateOrderNumber(orders.value.length),
+      createdAt: new Date(),
+      status: 'pending', 
+      ...orderData, 
+    }
+    orders.value.push(newOrder)
+    return newOrder
   }
-  orders.value.push(newOrder)
-  return newOrder
-}
+
   function updateOrder(id, updates) {
     const index = orders.value.findIndex(o => o.id === id)
     if (index !== -1) {
@@ -69,12 +62,11 @@ function updateOrder(id, data) {
     return orders.value.find(o => o.id === id)
   }
 
-function deleteOrder(id) {
-  const index = orders.value.findIndex(o => o.id === id) // Use orders.value, not this.orders
-  if (index !== -1) orders.value.splice(index, 1)
-}
+  function deleteOrder(id) {
+    const index = orders.value.findIndex(o => o.id === id)
+    if (index !== -1) orders.value.splice(index, 1)
+  }
 
-  
   return {
     orders,
     totalCount,

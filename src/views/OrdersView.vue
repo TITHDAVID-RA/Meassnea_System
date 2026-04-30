@@ -38,33 +38,25 @@ const closeMenus = (e) => {
 onMounted(() => window.addEventListener('click', closeMenus))
 onUnmounted(() => window.removeEventListener('click', closeMenus))
 
-/**
- * UPDATED LOGIC: Search items + Sort Newest First
- */
 const filteredOrders = computed(() => {
-  let items = orderStore.orders.filter((order) => {
-    const searchLower = search.value.toLowerCase()
-    
-    // Search Order # or Customer
-    const matchesBasic = !search.value ||
-      order.orderNumber.toLowerCase().includes(searchLower) ||
-      order.customer.toLowerCase().includes(searchLower)
-    
-    // NEW: Search for Item names inside the order
-    const matchesItems = order.items.some(item => 
-      item.productName.toLowerCase().includes(searchLower)
-    )
+  return orderStore.orders
+    .filter((order) => {
+      const searchLower = (search.value || '').toLowerCase()
+      const matchesSearch =
+        (order.orderNumber?.toLowerCase() || '').includes(searchLower) ||
+        (order.customer?.toLowerCase() || '').includes(searchLower) ||
+        order.items?.some((item) => (item.name?.toLowerCase() || '').includes(searchLower))
 
-    const matchesStatus = !statusFilter.value || order.status === statusFilter.value
-    const matchesDateRange =
-      (!startDate.value || new Date(order.date) >= new Date(startDate.value)) &&
-      (!endDate.value || new Date(order.date) <= new Date(endDate.value))
-    
-    return (matchesBasic || matchesItems) && matchesStatus && matchesDateRange
-  })
+      const matchesStatus = !statusFilter.value || order.status === statusFilter.value
 
-  // SORT: New to Old (Newest at the top)
-  return items.sort((a, b) => new Date(b.date) - new Date(a.date))
+      const orderDate = new Date(order.date)
+      const matchesDate =
+        (!startDate.value || orderDate >= new Date(startDate.value)) &&
+        (!endDate.value || orderDate <= new Date(endDate.value))
+
+      return matchesSearch && matchesStatus && matchesDate
+    })
+    .sort((a, b) => new Date(b.date) - new Date(a.date))
 })
 
 const totals = computed(() => {
@@ -91,56 +83,26 @@ function viewDetails(id) {
   activeMenuId.value = null
 }
 
+/**
+ * CANCEL ORDER
+ * - Pending: just cancel, stock already deducted on creation
+ * - Completed: return product stock + plastic bags, remove income
+ */
 function cancelOrder(id) {
-  if (!confirm('Are you sure you want to cancel this order?')) return
+  if (!confirm('តើអ្នកប្រាកដជាចង់បោះបង់ការកម្មង់នេះមែនទេ?')) return
   const order = orderStore.getOrderById(id)
   if (!order) return
 
-  if (order.status === 'completed') {
-    order.items.forEach((item) => {
-      const product = stockStore.getProductById(item.productId)
-      if (product) {
-        const previousQty = product.quantity
-        stockStore.adjustStock(item.productId, item.quantity, 'in')
-        inventoryStore.recordMovement({
-          productId: product.id,
-          productName: product.name,
-          type: 'return',
-          quantity: item.quantity,
-          previousQuantity: previousQty,
-          newQuantity: product.quantity,
-          unitPrice: item.unitPrice,
-          totalValue: item.total,
-          reference: order.orderNumber,
-          referenceId: order.id,
-          notes: 'Order cancelled - stock returned',
-        })
-      }
-    })
-    const incomeIndex = incomeStore.incomes.findIndex((i) => i.orderId === id)
-    if (incomeIndex !== -1) incomeStore.incomes.splice(incomeIndex, 1)
-  }
-  orderStore.cancelOrder(id)
-  activeMenuId.value = null
-}
-
-function completeOrder(id) {
-  const order = orderStore.getOrderById(id)
-  if (!order || order.status !== 'pending') return
-
-  for (const item of order.items) {
+  // Return product stock to inventory (for both pending and completed)
+  order.items.forEach((item) => {
     const product = stockStore.getProductById(item.productId)
     if (product) {
-      if (item.quantity > product.quantity) {
-        alert(`Cannot complete order. Not enough stock for ${product.name}. Available: ${product.quantity}`)
-        return
-      }
       const previousQty = product.quantity
-      stockStore.adjustStock(item.productId, item.quantity, 'out')
+      stockStore.adjustStock(item.productId, item.quantity, 'in')
       inventoryStore.recordMovement({
         productId: product.id,
         productName: product.name,
-        type: 'sale',
+        type: 'return',
         quantity: item.quantity,
         previousQuantity: previousQty,
         newQuantity: product.quantity,
@@ -148,14 +110,46 @@ function completeOrder(id) {
         totalValue: item.total,
         reference: order.orderNumber,
         referenceId: order.id,
-        notes: `Sold to ${order.customer}`,
+        notes: 'Order cancelled - stock returned',
       })
     }
+  })
+
+  // Return plastic bags (update original deduction row, don't create new)
+  const pbQty = Number(order.plasticBagQty) || 0
+  if (pbQty > 0) {
+    stockStore.returnPlasticBag(pbQty, order.orderNumber)
   }
+
+  // If was completed, remove the income record
+  if (order.status === 'completed') {
+    const incomeIndex = incomeStore.incomes.findIndex((i) => i.orderId === id)
+    if (incomeIndex !== -1) incomeStore.incomes.splice(incomeIndex, 1)
+  }
+
+  orderStore.cancelOrder(id)
+  activeMenuId.value = null
+}
+
+/**
+ * COMPLETE ORDER
+ * - Pending -> Completed: just add income (stock already deducted on creation)
+ */
+function completeOrder(id) {
+  const order = orderStore.getOrderById(id)
+  if (!order || order.status !== 'pending') return
+
+  // Stock was already deducted when order was created
+  // Just add income and update status
   orderStore.completeOrder(id)
+
+  // Income = product total minus delivery cost
+  const productTotal = order.items.reduce((sum, item) => sum + item.total, 0)
+  const incomeAmount = Math.max(0, productTotal - (Number(order.deliveryCost) || 0))
+
   incomeStore.addIncome({
     date: new Date(),
-    amount: order.total,
+    amount: incomeAmount,
     category: 'លក់ផលិតផល',
     paymentMethod: order.paymentMethod,
     description: `${order.orderNumber}`,
@@ -163,6 +157,7 @@ function completeOrder(id) {
     reference: order.orderNumber,
     orderId: order.id,
   })
+
   activeMenuId.value = null
 }
 </script>
@@ -170,15 +165,15 @@ function completeOrder(id) {
 <template>
   <div class="page">
     <div class="page-header">
-<div class="search-box">
-  <i class="fas fa-search search-icon"></i>
-  <input 
-    type="text" 
-    placeholder="ស្វែងរកការកម្មង់..." 
-    v-model="search" 
-    class="search-input"
-  />
-</div>
+      <div class="search-box">
+        <i class="fas fa-search search-icon"></i>
+        <input
+          type="text"
+          placeholder="ស្វែងរកការកម្មង់..."
+          v-model="search"
+          class="search-input"
+        />
+      </div>
       <button class="btn btn-primary" @click="showOrderModal = true">
         <i class="fas fa-plus"></i> កម្មង់ថ្មី
       </button>
@@ -214,7 +209,9 @@ function completeOrder(id) {
           </thead>
           <tbody>
             <tr v-for="order in filteredOrders" :key="order.id">
-              <td><strong>{{ order.orderNumber }}</strong></td>
+              <td>
+                <strong>{{ order.orderNumber }}</strong>
+              </td>
               <td>{{ formatDate(order.date) }}</td>
               <td>{{ order.customer }}</td>
               <td>
@@ -244,10 +241,20 @@ function completeOrder(id) {
                     <button class="btn-icon" @click="viewDetails(order.id)" title="View Details">
                       <i class="fas fa-eye"></i> <span class="mobile-label">View Details</span>
                     </button>
-                    <button v-if="order.status === 'pending'" class="btn-icon success" @click="completeOrder(order.id)" title="Complete">
+                    <button
+                      v-if="order.status === 'pending'"
+                      class="btn-icon success"
+                      @click="completeOrder(order.id)"
+                      title="Complete"
+                    >
                       <i class="fas fa-check"></i> <span class="mobile-label">ទូទាត់</span>
                     </button>
-                    <button v-if="order.status !== 'cancelled'" class="btn-icon danger" @click="cancelOrder(order.id)" title="Cancel">
+                    <button
+                      v-if="order.status !== 'cancelled'"
+                      class="btn-icon danger"
+                      @click="cancelOrder(order.id)"
+                      title="Cancel"
+                    >
                       <i class="fas fa-times"></i> <span class="mobile-label">បោះបង់</span>
                     </button>
                   </div>
@@ -258,8 +265,12 @@ function completeOrder(id) {
           <tfoot class="table-footer-fixed">
             <tr>
               <td colspan="3" class="text-right"></td>
-              <td><strong>ទំនិញសរុប​ : {{ totals.items }}</strong></td>
-              <td class="amount-cell"><strong>{{ formatCurrency(totals.amount) }}</strong></td>
+              <td>
+                <strong>ទំនិញសរុប​ : {{ totals.items }}</strong>
+              </td>
+              <td class="amount-cell">
+                <strong>{{ formatCurrency(totals.amount) }}</strong>
+              </td>
               <td colspan="2"></td>
             </tr>
           </tfoot>
@@ -274,20 +285,15 @@ function completeOrder(id) {
 </template>
 
 <style scoped>
-
-
-/* NEW: Scroll logic after approx 10 rows */
 .scrollable-table-container {
-max-height: 650px;
-  /* Use !important to override the 'overflow-y: visible' in main.css at 768px */
-  overflow-y: auto !important; 
+  max-height: 650px;
+  overflow-y: auto !important;
   overflow-x: auto;
   position: relative;
   border: 1px solid var(--border-color);
   border-radius: 8px;
 }
 
-/* NEW: Sticky Header to keep titles visible while scrolling */
 .scrollable-table-container thead th {
   position: sticky;
   top: 0;
@@ -303,7 +309,6 @@ max-height: 650px;
   font-family: monospace;
 }
 
-/* Action Buttons Container */
 .action-wrapper {
   position: relative;
   display: inline-block;
@@ -328,7 +333,6 @@ max-height: 650px;
   display: none;
 }
 
-/* RESPONSIVE LOGIC */
 @media (max-width: 768px) {
   .btn-dots {
     display: block;
@@ -379,7 +383,7 @@ max-height: 650px;
     display: inline;
     font-size: 0.9rem;
   }
-  
+
   .btn-dots {
     display: block;
   }

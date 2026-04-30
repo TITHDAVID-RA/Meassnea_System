@@ -6,10 +6,7 @@ import { useIncomeStore } from '@/stores/incomeStore'
 import { useInventoryStore } from '@/stores/inventoryStore'
 import { useFormatters } from '@/composables/useFormatters'
 
-const props = defineProps({
-  modelValue: Boolean
-})
-
+const props = defineProps({ modelValue: Boolean })
 const emit = defineEmits(['update:modelValue', 'save'])
 
 const stockStore = useStockStore()
@@ -23,135 +20,34 @@ const form = ref({
   customer: '',
   paymentMethod: 'cash',
   status: 'pending',
-  notes: ''
+  plasticBagQty: 1,
+  deliveryCost: 0
 })
 
 const items = ref([])
 
-/**
- * UPDATED: availableProducts
- * This now only returns the "Active" batch for each product name.
- * An active batch is the oldest one with quantity > 0.
- */
 const availableProducts = computed(() => {
   const allItems = stockStore.stockItems.filter(item => item.quantity > 0)
   const uniqueNames = [...new Set(allItems.map(i => i.name))]
-  
   return uniqueNames.map(name => {
-    // Find the oldest batch for this specific name
-    const batches = allItems
-      .filter(i => i.name === name)
-      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
-    
-    return batches[0] // Return only the oldest available batch
-  }).filter(Boolean)
+    return allItems.filter(i => i.name === name).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))[0]
+  }).sort((a, b) => a.name.localeCompare(b.name))
 })
 
 const total = computed(() => {
-  return items.value.reduce((sum, item) => sum + ((item.unitPrice || 0) * (item.quantity || 0)), 0)
+  const itemsTotal = items.value.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0)
+  return itemsTotal + (Number(form.value.deliveryCost) || 0)
 })
 
-function addItem() {
-  items.value.push({
-    id: Date.now() + Math.random(),
-    productId: '',
-    quantity: 1,
-    unitPrice: 0,
-    maxStock: 0
-  })
-}
-
-function removeItem(index) {
-  if (items.value.length > 1) {
-    items.value.splice(index, 1)
-  } else {
-    alert('ការកម្មង់ត្រូវតែមានទំនិញយ៉ាងតិចមួយ')
-  }
-}
+function addItem() { items.value.push({ productId: '', quantity: 1, unitPrice: 0, costPrice: 0 }) }
+function removeItem(index) { items.value.splice(index, 1) }
 
 function updateItemPrice(index) {
-  const item = items.value[index]
-  const product = stockStore.getProductById(item.productId)
+  const product = stockStore.getProductById(items.value[index].productId)
   if (product) {
-    item.unitPrice = product.unitPrice
-    item.maxStock = product.quantity
-    if (item.quantity > product.quantity) {
-      item.quantity = product.quantity
-    }
+    items.value[index].unitPrice = product.unitPrice
+    items.value[index].costPrice = product.costPrice || 0
   }
-}
-
-function validateItems() {
-  for (const item of items.value) {
-    if (!item.productId || !item.quantity || item.quantity <= 0 || !item.unitPrice) {
-      alert('សូមបំពេញព័ត៌មានទំនិញឱ្យបានត្រឹមត្រូវ')
-      return null
-    }
-    const product = stockStore.getProductById(item.productId)
-    if (!product) {
-      alert('រកមិនឃើញទំនិញ')
-      return null
-    }
-    if (item.quantity > product.quantity) {
-      alert(`ចំនួនស្តុកមិនគ្រាន់គ្រាន់សម្រាប់ ${product.name} (នៅសល់: ${product.quantity})`)
-      return null
-    }
-  }
-  return items.value.map(item => {
-    const product = stockStore.getProductById(item.productId)
-    return {
-      productId: item.productId,
-      productName: product.name,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      total: item.unitPrice * item.quantity
-    }
-  })
-}
-
-function save() {
-  const validatedItems = validateItems()
-  if (!validatedItems) return
-
-  const order = orderStore.createOrder({
-    date: new Date(form.value.date),
-    customer: form.value.customer,
-    paymentMethod: form.value.paymentMethod,
-    status: form.value.status,
-    items: validatedItems,
-    total: total.value,
-    notes: form.value.notes
-  })
-
-  if (form.value.status === 'completed') {
-    validatedItems.forEach(item => {
-      const product = stockStore.getProductById(item.productId)
-      if (product) {
-        stockStore.adjustStock(item.productId, item.quantity, 'out')
-        inventoryStore.recordMovement({
-          productId: product.id,
-          productName: product.name,
-          type: 'sale',
-          quantity: item.quantity,
-          reference: order.orderNumber,
-          notes: `Sold to ${form.value.customer}`
-        })
-      }
-    })
-
-    incomeStore.addIncome({
-      date: new Date(form.value.date),
-      amount: order.total,
-      category: 'លក់ផលិតផល',
-      paymentMethod: form.value.paymentMethod,
-      customer: form.value.customer,
-      orderId: order.id,
-      reference: order.orderNumber,
-      description: `${order.orderNumber}`
-    })
-  }
-
-  close()
 }
 
 function close() {
@@ -160,107 +56,196 @@ function close() {
 }
 
 function resetForm() {
-  form.value = {
-    date: new Date().toISOString().split('T')[0],
-    customer: '',
-    paymentMethod: 'cash',
-    status: 'pending',
-    notes: ''
+  form.value = { 
+    date: new Date().toISOString().split('T')[0], 
+    customer: '', 
+    paymentMethod: 'cash', 
+    status: 'pending', 
+    plasticBagQty: 1,
+    deliveryCost: 0 
   }
   items.value = []
-  addItem()
 }
 
-addItem()
+function save() {
+  if (items.value.length === 0) return alert('សូមជ្រើសរើសទំនិញយ៉ាងតិចមួយ')
+
+  // Validate stock availability before creating order
+  for (const item of items.value) {
+    const product = stockStore.getProductById(item.productId)
+    if (!product) return alert('ទំនិញមិនត្រឹមត្រូវ')
+    if (item.quantity > product.quantity) {
+      return alert(`ស្តុកមិនគ្រប់គ្រាន់សម្រាប់ ${product.name}។ នៅសល់: ${product.quantity}`)
+    }
+  }
+
+  const orderData = { 
+    ...form.value, 
+    items: items.value.map(item => {
+      const product = stockStore.getProductById(item.productId)
+      return {
+        ...item,
+        productName: product?.name || '',
+        total: item.quantity * item.unitPrice
+      }
+    }), 
+    total: total.value 
+  }
+
+  // Create Order
+  const order = orderStore.createOrder(orderData)
+
+  // Deduct stock immediately for ALL orders (both pending and completed)
+  // This prevents overselling. If cancelled, stock is returned.
+  items.value.forEach(item => {
+    const product = stockStore.getProductById(item.productId)
+    if (product) {
+      const previousQty = product.quantity
+      stockStore.adjustStock(item.productId, item.quantity, 'out')
+      inventoryStore.recordMovement({
+        productId: product.id,
+        productName: product.name,
+        type: 'sale',
+        quantity: item.quantity,
+        previousQuantity: previousQty,
+        newQuantity: product.quantity,
+        unitPrice: item.unitPrice,
+        totalValue: item.quantity * item.unitPrice,
+        reference: order.orderNumber,
+        referenceId: order.id,
+        notes: `Reserved for ${order.customer} - ${order.status}`,
+      })
+    }
+  })
+
+  // Deduct Plastic Bag
+  if (form.value.plasticBagQty > 0) {
+    stockStore.deductPlasticBag(Number(form.value.plasticBagQty) || 0, order.orderNumber)
+  }
+
+  // Calculate income: Σ((unitPrice - costPrice) × quantity) - deliveryCost
+  let totalProfit = 0
+  items.value.forEach(item => {
+    const profitPerUnit = item.unitPrice - (item.costPrice || 0)
+    totalProfit += profitPerUnit * item.quantity
+  })
+  const incomeAmount = Math.max(0, totalProfit - (Number(form.value.deliveryCost) || 0))
+
+  // If status is 'completed', also add income immediately
+  if (form.value.status === 'completed') {
+    incomeStore.addIncome({
+      date: form.value.date,
+      customer: form.value.customer,
+      amount: incomeAmount,
+      category: 'លក់ផលិតផល',
+      description: `${order.orderNumber}`,
+      paymentMethod: form.value.paymentMethod,
+      orderId: order.id
+    })
+  }
+
+  emit('save')
+  close()
+}
 </script>
 
 <template>
   <Teleport to="body">
     <div v-if="modelValue" class="modal-overlay" @click.self="close">
-      <div class="modal" style="max-width: 700px;">
+      <div class="modal-container">
         <div class="modal__header">
           <h2>បង្កើតការកម្មង់ថ្មី</h2>
-          <button class="close-btn" @click="close">
-            <i class="fas fa-times"></i>
-          </button>
+          <button class="close-btn" @click="close"><i class="fas fa-times"></i></button>
         </div>
+
         <div class="modal__body">
-          <form @submit.prevent="save">
+          <form @submit.prevent>
             <div class="form-row">
               <div class="form-group">
-                <label>កាលបរិច្ឆេទ *</label>
-                <input type="date" v-model="form.date" required>
+                <label>ថ្ងៃខែ</label>
+                <input type="date" v-model="form.date" class="form-input">
               </div>
               <div class="form-group">
-                <label>ឈ្មោះអតិថិជន *</label>
-                <input type="text" v-model="form.customer" required placeholder="ឈ្មោះអតិថិជន">
+                <label>ឈ្មោះអតិថិជន</label>
+                <input type="text" v-model="form.customer" placeholder="ឈ្មោះអតិថិជន" class="form-input">
               </div>
             </div>
-            
+
             <div class="form-row">
               <div class="form-group">
-                <label>វិធីសាស្ត្រទូទាត់ *</label>
-                <select v-model="form.paymentMethod" required>
-                  <option value="cash">សាច់ប្រាក់</option>
-                  <option value="bank_transfer">ផ្ទេរប្រាក់តាមធនាគារ</option>
+                <label>វិធីសាស្ត្រទូទាត់</label>
+                <select v-model="form.paymentMethod" class="form-select">
+                  <option value="cash">សាច់ប្រាក់ (Cash)</option>
+                  <option value="bank">ធនាគារ (Bank Transfer)</option>
                 </select>
               </div>
               <div class="form-group">
-                <label>ស្ថានភាពការកម្មង់ *</label>
-                <select v-model="form.status" required>
-                  <option value="pending">មិនទាន់ទូទាត់ (Pending)</option>
-                  <option value="completed">ទូទាត់រួច (Completed)</option>
+                <label>ស្ថានភាព</label>
+                <select v-model="form.status" class="form-select">
+                  <option value="pending">កំពុងរង់ចាំ (Pending)</option>
+                  <option value="completed">បានបញ្ចប់ (Completed)</option>
                 </select>
               </div>
             </div>
 
-            <div class="order-items-section">
+            <div class="form-row charges-row">
+              <div class="form-group">
+                <label>ចំនួនថង់ (Plastic Bags)</label>
+                <input type="number" v-model.number="form.plasticBagQty" min="0" class="form-input">
+              </div>
+              <div class="form-group">
+                <label>ថ្លៃដឹកជញ្ជូន (Delivery $)</label>
+                <input type="number" v-model.number="form.deliveryCost" min="0" step="0.01" class="form-input">
+              </div>
+            </div>
+
+            <div class="items-section">
               <div class="section-header">
-                <h4>បញ្ជីទំនិញកម្មង់</h4>
-                <button type="button" class="btn btn-outline btn-sm" @click="addItem">
+                <h3>បញ្ជីទំនិញ</h3>
+                <button type="button" class="btn-add-item" @click="addItem">
                   <i class="fas fa-plus"></i> បន្ថែមទំនិញ
                 </button>
               </div>
-              
-              <div class="order-items-list">
-                <div v-for="(item, index) in items" :key="item.id" class="order-item-row">
-                  <div class="form-group flex-grow">
-                    <label>ឈ្មោះទំនិញ</label>
-                    <select v-model="item.productId" @change="updateItemPrice(index)" required>
-                      <option value="">ជ្រើសរើសទំនិញ</option>
-                      <option 
-                        v-for="product in availableProducts" 
-                        :key="product.id" 
-                        :value="product.id"
-                      >
-                        {{ product.name }} (ស្តុកនៅសល់: {{ product.quantity }})
+
+              <div class="items-list">
+                <div v-for="(item, index) in items" :key="index" class="order-item-row">
+                  <div class="item-product">
+                    <select v-model="item.productId" @change="updateItemPrice(index)" class="form-select">
+                      <option value="" disabled>ជ្រើសរើសទំនិញ</option>
+                      <option v-for="p in availableProducts" :key="p.id" :value="p.id">
+                        {{ p.name }} (សល់: {{ p.quantity }})
                       </option>
                     </select>
                   </div>
-                  <div class="form-group width-sm">
-                    <label>ចំនួន</label>
-                    <input type="number" v-model.number="item.quantity" min="1" :max="item.maxStock" required>
+                  <div class="item-qty">
+                    <input type="number" v-model.number="item.quantity" placeholder="ចំនួន" min="1" class="form-input">
                   </div>
-                  <div class="form-group width-md">
-                    <label>តម្លៃឯកតា</label>
-                    <input type="text" :value="formatCurrency(item.unitPrice)" readonly>
+                  <div class="item-cost">
+                    <input type="text" :value="formatCurrency(item.costPrice)" readonly class="form-input readonly" title="តម្លៃដើម">
                   </div>
-                  <button type="button" class="remove-item-btn" @click="removeItem(index)" title="Remove">
+                  <div class="item-price">
+                    <input type="text" :value="formatCurrency(item.unitPrice)" readonly class="form-input readonly">
+                  </div>
+                  <button type="button" class="remove-item-btn" @click="removeItem(index)">
                     <i class="fas fa-trash"></i>
                   </button>
                 </div>
               </div>
-              <div class="order-total">
-                សរុប: {{ formatCurrency(total) }}
-              </div>
-            </div>
 
-            <div class="form-group">
-              <label>សម្គាល់ (កំណត់ចំណាំផ្សេងៗ)</label>
-              <textarea v-model="form.notes" rows="2"></textarea>
+              <div class="order-summary-footer">
+                <div class="summary-item">
+                  <span>ថ្លៃដឹកជញ្ជូន:</span>
+                  <span>{{ formatCurrency(form.deliveryCost) }}</span>
+                </div>
+                <div class="summary-item total">
+                  <span>សរុបរួម:</span>
+                  <span>{{ formatCurrency(total) }}</span>
+                </div>
+              </div>
             </div>
           </form>
         </div>
+
         <div class="modal__footer">
           <button class="btn btn-outline" @click="close">បោះបង់</button>
           <button class="btn btn-primary" @click="save">បង្កើតការកម្មង់</button>
@@ -271,29 +256,60 @@ addItem()
 </template>
 
 <style scoped>
-
-@media (max-width: 600px) {
-  .order-item-row {
-    flex-direction: column; /* Stack fields vertically */
-    align-items: stretch;
-    gap: 8px;
-    padding-top: 40px;
-    position: relative; /* Space for absolute positioned trash icon */
-  }
-
-  .width-sm, .width-md, .flex-grow {
-    width: 100% !important; /* Full width on mobile */
-  }
-
-  .remove-item-btn {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    padding: 5px 10px;
-  }
-  
-  .modal__header h2 {
-    font-size: 1.2rem; /* Smaller title on mobile */
-  }
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+  overflow-y: auto;
 }
+.modal-container {
+  background: #ffffff;
+  border-radius: 12px;
+  width: 100%;
+  max-width: 700px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+}
+.modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.modal__header h2 { margin: 0; font-size: 1.25rem; font-weight: 700; color: #1e293b; }
+.close-btn { background: none; border: none; font-size: 1.25rem; color: #64748b; cursor: pointer; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border-radius: 8px; }
+.close-btn:hover { background: #e2e8f0; color: #1e293b; }
+.modal__body { padding: 24px; flex: 1; overflow-y: auto; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+.form-group { display: flex; flex-direction: column; gap: 6px; }
+.form-group label { font-size: 0.875rem; font-weight: 600; color: #374151; }
+.form-input, .form-select { width: 100%; padding: 10px 14px; border: 1.5px solid #d1d5db; border-radius: 8px; font-size: 0.95rem; }
+.form-input.readonly { background: #f3f4f6; cursor: not-allowed; }
+.charges-row { background-color: #f0f9ff; padding: 16px; border-radius: 10px; border: 1px solid #bae6fd; }
+.items-section { margin-top: 24px; padding-top: 20px; border-top: 2px solid #e2e8f0; }
+.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.btn-add-item { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: #3b82f6; color: white; border: none; border-radius: 8px; cursor: pointer; }
+.items-list { display: flex; flex-direction: column; gap: 12px; }
+.order-item-row { display: grid; grid-template-columns: 1fr 80px 90px 100px 40px; gap: 10px; align-items: center; padding: 12px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0; }
+.remove-item-btn { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: #fee2e2; color: #dc2626; border: none; border-radius: 8px; cursor: pointer; }
+.order-summary-footer { margin-top: 20px; padding: 16px 20px; background: #f0fdf4; border-radius: 10px; border: 1px solid #bbf7d0; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.summary-item.total { font-size: 1.3rem; font-weight: 800; color: #15803d; }
+.modal__footer { display: flex; justify-content: flex-end; gap: 12px; padding: 16px 24px; border-top: 1px solid #e2e8f0; background: #f8fafc; position: sticky; bottom: 0; }
+.btn { padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; border: none; }
+.btn-outline { background: #ffffff; border: 1.5px solid #d1d5db; }
+.btn-primary { background: #3b82f6; color: white; }
 </style>

@@ -8,7 +8,7 @@ const props = defineProps({
   title: String
 })
 
-defineEmits(['toggle-sidebar'])
+defineEmits(['toggle-sidebar', 'logout'])
 
 const stockStore = useStockStore()
 const assetStore = useAssetStore()
@@ -22,8 +22,9 @@ const notifications = computed(() => {
   const alerts = []
   
   // 1. Low Stock Alerts
-  stockStore.lowStockItems.forEach(item => {
-    const id = `low-stock-${item.id}-${item.quantity}` // Unique ID including quantity
+  // Added ?. to prevent crash if stockStore.lowStockItems is undefined
+  stockStore.lowStockItems?.forEach(item => {
+    const id = `low-stock-${item.id}-${item.quantity}`
     if (!clearedNotifications.value.includes(id)) {
       alerts.push({
         id,
@@ -36,7 +37,8 @@ const notifications = computed(() => {
   })
   
   // 2. Maintenance Alerts
-  assetStore.assets.filter(a => a.status === 'maintenance').forEach(item => {
+  // Added ?. to prevent crash if assetStore.assets is undefined
+  assetStore.assets?.filter(a => a.status === 'maintenance').forEach(item => {
     const id = `maint-${item.id}`
     if (!clearedNotifications.value.includes(id)) {
       alerts.push({
@@ -137,6 +139,11 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
           </div>
         </div>
       </div>
+
+      <!-- Logout Button -->
+      <button class="logout-btn" @click="$emit('logout')" title="ចាកចេញ">
+        <i class="fas fa-sign-out-alt"></i>
+      </button>
     </div>
   </header>
 </template>
@@ -208,5 +215,31 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
 
 .notifications-dropdown.active {
   display: block;
+}
+
+.logout-btn {
+  background: none;
+  border: none;
+  color: #64748b;
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 8px 10px;
+  border-radius: 8px;
+  margin-left: 8px;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.logout-btn:hover {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 </style>

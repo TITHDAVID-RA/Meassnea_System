@@ -1,15 +1,19 @@
 <template>
-  <aside 
-    class="sidebar" 
-    :class="{ 
-      'collapsed': collapsed, 
-      'mobile-open': mobileOpen 
+  <aside
+    class="sidebar"
+    :class="{
+      collapsed: collapsed,
+      'mobile-open': mobileOpen,
     }"
   >
     <div class="sidebar-header">
       <div class="logo">
-        <i class="fas fa-chart-line"></i>
-        <span v-show="!collapsed || mobileOpen">MEASSNEA</span>
+        <img
+          src="C:\Users\RATithdavid\Desktop\Meassnea\Final\Vue.js\Meassnea-system\src\assets\មាសស្នេហ៍_final-01-removebg-preview.png"
+          alt="MEASSNEA"
+          class="logo-img"
+        />
+        <span v-show="!collapsed || mobileOpen" class="brand">MEASSNEA</span>
       </div>
       <button class="toggle-btn" @click="$emit('toggle')">
         <i :class="collapsed && !mobileOpen ? 'fas fa-chevron-right' : 'fas fa-chevron-left'"></i>
@@ -41,7 +45,7 @@ import { useRoute } from 'vue-router'
 
 const props = defineProps({
   collapsed: Boolean,
-  mobileOpen: Boolean
+  mobileOpen: Boolean,
 })
 
 defineEmits(['toggle'])
@@ -53,6 +57,17 @@ const navItems = [
   { name: 'orders', label: 'ការកម្មង់', icon: 'fas fa-shopping-cart', path: '/orders' },
   { name: 'assets', label: 'ស្តុកអីវ៉ាន់', icon: 'fas fa-laptop', path: '/assets' },
   { name: 'income', label: 'ចំណូល', icon: 'fas fa-arrow-trend-up', path: '/income' },
-  { name: 'expense', label: 'ចំណាយ', icon: 'fas fa-arrow-trend-down', path: '/expense' }
+  { name: 'expense', label: 'ចំណាយ', icon: 'fas fa-arrow-trend-down', path: '/expense' },
 ]
 </script>
+<style scoped>
+.logo-img {
+  width: 80px;
+  height: 50px;
+}
+
+.brand {
+  font-size: 20px;
+  font-weight: bold;
+}
+</style>

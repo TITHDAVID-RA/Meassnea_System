@@ -64,17 +64,75 @@ const totals = computed(() => {
     (acc, order) => {
       if (order.status === 'completed' || order.status === 'pending') {
         const itemCount = order.items.reduce((sum, item) => sum + item.quantity, 0)
+        const productTotal = order.total - (Number(order.deliveryCost) || 0)
+        const totalCostPrice = order.items.reduce(
+          (sum, item) => sum + (item.costPrice || 0) * item.quantity,
+          0,
+        )
+
+        // Get material costs for plastic bag and case box
+        const plasticBagUnitCost = stockStore.getMaterialUnitCost('ថង់', 'N/A')
+        const caseBoxUnitCost = stockStore.getMaterialUnitCost('កេស', 'N/A')
+        const plasticBagCost = (Number(order.plasticBagQty) || 0) * plasticBagUnitCost
+        const caseBoxCost = (Number(order.caseBoxQty) || 0) * caseBoxUnitCost
+
+        // Net income (display) = product total - delivery - bag costs
+        const netIncome =
+          productTotal -
+          (Number(order.deliveryCost) || 0) -
+          plasticBagCost -
+          caseBoxCost
+
         acc.items += itemCount
-        acc.amount += order.total
+        acc.productTotal += productTotal
+        acc.netIncome += Math.max(0, netIncome)
+        acc.totalCostPrice += totalCostPrice
+        acc.plasticBagCost += plasticBagCost
+        acc.caseBoxCost += caseBoxCost
+        acc.deliveryCost += Number(order.deliveryCost) || 0
       }
       return acc
     },
-    { items: 0, amount: 0 },
+    {
+      items: 0,
+      productTotal: 0,
+      netIncome: 0,
+      plasticBagCost: 0,
+      caseBoxCost: 0,
+      deliveryCost: 0,
+    },
   )
 })
 
 function getStatusClass(status) {
   return `badge-${status}`
+}
+
+// Calculate per-order financial breakdown
+function getOrderBreakdown(order) {
+  const productTotal = order.total - (Number(order.deliveryCost) || 0)
+  const totalCostPrice = order.items.reduce(
+    (sum, item) => sum + (item.costPrice || 0) * item.quantity,
+    0,
+  )
+  const plasticBagUnitCost = stockStore.getMaterialUnitCost('ថង់', 'N/A')
+  const caseBoxUnitCost = stockStore.getMaterialUnitCost('កេស', 'N/A')
+  const plasticBagCost = (Number(order.plasticBagQty) || 0) * plasticBagUnitCost
+  const caseBoxCost = (Number(order.caseBoxQty) || 0) * caseBoxUnitCost
+  const deliveryCost = Number(order.deliveryCost) || 0
+  const netIncome = Math.max(
+    0,
+    productTotal - deliveryCost - plasticBagCost - caseBoxCost ,
+  )
+
+  return {
+    productTotal,
+    totalCostPrice,
+    plasticBagCost,
+    caseBoxCost,
+    deliveryCost,
+    netIncome,
+  }
 }
 
 function viewDetails(id) {
@@ -121,6 +179,12 @@ function cancelOrder(id) {
     stockStore.returnPlasticBag(pbQty, order.orderNumber)
   }
 
+  // Return case boxes (update original deduction row, don't create new)
+  const cbQty = Number(order.caseBoxQty) || 0
+  if (cbQty > 0) {
+    stockStore.returnCaseBox(cbQty, order.orderNumber)
+  }
+
   // If was completed, remove the income record
   if (order.status === 'completed') {
     const incomeIndex = incomeStore.incomes.findIndex((i) => i.orderId === id)
@@ -143,9 +207,16 @@ function completeOrder(id) {
   // Just add income and update status
   orderStore.completeOrder(id)
 
-  // Income = product total minus delivery cost
-  const productTotal = order.items.reduce((sum, item) => sum + item.total, 0)
-  const incomeAmount = Math.max(0, productTotal - (Number(order.deliveryCost) || 0))
+  // Income = product total - delivery - bags - costPrice
+  const breakdown = getOrderBreakdown(order)
+  const incomeAmount = Math.max(
+    0,
+    breakdown.productTotal -
+    breakdown.deliveryCost -
+    breakdown.plasticBagCost -
+    breakdown.caseBoxCost -
+    breakdown.totalCostPrice
+  )
 
   incomeStore.addIncome({
     date: new Date(),
@@ -202,13 +273,14 @@ function completeOrder(id) {
               <th>ថ្ងៃខែ</th>
               <th>ឈ្មោះអតិថិជន</th>
               <th>ទំនិញ</th>
-              <th></th>
-              <th></th>
-              <th></th>
+              <th>តម្លៃទំនិញ</th>
+              <th>ចំណូលសុទ្ធ</th>
+              <th>ស្ថានភាព</th>
+              <th>សកម្មភាព</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="order in filteredOrders" :key="order.id">
+            <tr v-for="order in filteredOrders" :key="order.id" class="order-main-row">
               <td>
                 <strong>{{ order.orderNumber }}</strong>
               </td>
@@ -222,7 +294,19 @@ function completeOrder(id) {
                   ({{ order.items.reduce((sum, item) => sum + item.quantity, 0) }} units)
                 </small>
               </td>
-              <td class="amount-cell">{{ formatCurrency(order.total) }}</td>
+              <!-- Product Price (old) -->
+              <td class="amount-cell">
+                <strong>{{ formatCurrency(getOrderBreakdown(order).productTotal) }}</strong>
+              </td>
+              <!-- Net Income (new) -->
+              <td class="amount-cell net-income-cell">
+                <div v-if="order.status !== 'cancelled'">
+                  <strong class="text-success">{{
+                    formatCurrency(getOrderBreakdown(order).netIncome)
+                  }}</strong>
+                </div>
+                <span v-else class="text-muted">—</span>
+              </td>
               <td>
                 <span class="badge" :class="getStatusClass(order.status)">
                   <template v-if="order.status === 'pending'">មិនទាន់ទូទាត់</template>
@@ -263,15 +347,16 @@ function completeOrder(id) {
             </tr>
           </tbody>
           <tfoot class="table-footer-fixed">
-            <tr>
-              <td colspan="3" class="text-right"></td>
-              <td>
-                <strong>ទំនិញសរុប​ : {{ totals.items }}</strong>
-              </td>
+            <!-- Row 1: Total Product Price -->
+            <tr class="total-row-product">
+              <td colspan="4" class="text-right"></td>
               <td class="amount-cell">
-                <strong>{{ formatCurrency(totals.amount) }}</strong>
+                <strong>{{ formatCurrency(totals.productTotal) }}</strong>
               </td>
-              <td colspan="2"></td>
+              <td class="amount-cell text-success">
+                <strong>{{ formatCurrency(totals.netIncome) }}</strong>
+              </td>
+              <td colspan="2" class="text-muted">សរុប</td>
             </tr>
           </tfoot>
         </table>
@@ -307,6 +392,56 @@ function completeOrder(id) {
 }
 .amount-cell {
   font-family: monospace;
+}
+
+/* Footer row styles */
+.total-row-product {
+  background-color: #f0f9ff !important;
+}
+
+.total-row-product td {
+  padding: 12px 16px !important;
+  border-top: 2px solid #3b82f6;
+}
+
+.total-row-net {
+  background-color: #f0fdf4 !important;
+}
+
+.total-row-net td {
+  padding: 12px 16px !important;
+  border-top: 1px dashed #bbf7d0;
+}
+
+.deduction-detail {
+  font-size: 0.75rem;
+  color: #6b7280;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.text-success {
+  color: #16a34a;
+}
+
+/* Net income cell styles */
+.net-income-cell {
+  min-width: 140px;
+}
+
+.net-income-cell > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.deduction-mini {
+  font-size: 0.65rem;
+  color: #6b7280;
+  display: block;
+  line-height: 1.3;
+  white-space: nowrap;
 }
 
 .action-wrapper {

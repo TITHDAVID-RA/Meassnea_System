@@ -21,6 +21,7 @@ const form = ref({
   paymentMethod: 'cash',
   status: 'pending',
   plasticBagQty: 1,
+  caseBoxQty: 0,
   deliveryCost: 0
 })
 
@@ -62,6 +63,7 @@ function resetForm() {
     paymentMethod: 'cash', 
     status: 'pending', 
     plasticBagQty: 1,
+    caseBoxQty: 0,
     deliveryCost: 0 
   }
   items.value = []
@@ -121,6 +123,16 @@ function save() {
   // Deduct Plastic Bag
   if (form.value.plasticBagQty > 0) {
     stockStore.deductPlasticBag(Number(form.value.plasticBagQty) || 0, order.orderNumber)
+  }
+
+  // Deduct កេស (Case Box)
+  if (form.value.caseBoxQty > 0) {
+    stockStore.materialStockOut({
+      materialName: 'កេស',
+      size: 'N/A',
+      quantity: Number(form.value.caseBoxQty) || 0,
+      notes: `បានកាត់ចេញតាមការកម្មង់លេខ: ${order.orderNumber}`
+    })
   }
 
   // Calculate income: Σ((unitPrice - costPrice) × quantity) - deliveryCost
@@ -193,6 +205,12 @@ function save() {
                 <label>ចំនួនថង់ (Plastic Bags)</label>
                 <input type="number" v-model.number="form.plasticBagQty" min="0" class="form-input">
               </div>
+              <div class="form-group">
+                <label>ចំនួនកេស (Case Boxes)</label>
+                <input type="number" v-model.number="form.caseBoxQty" min="0" class="form-input">
+              </div>
+            </div>
+            <div class="form-row charges-row">
               <div class="form-group">
                 <label>ថ្លៃដឹកជញ្ជូន (Delivery $)</label>
                 <input type="number" v-model.number="form.deliveryCost" min="0" step="0.01" class="form-input">

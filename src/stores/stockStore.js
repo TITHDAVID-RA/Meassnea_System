@@ -5,25 +5,43 @@ import { useGenerators } from '@/composables/useGenerators'
 
 const defaultStockCategories = []
 
-// Products - only S, M, L (no XL), names in Khmer
+// Products - S, M, L + ទាបបារាំង (no size), names in Khmer
 const ALLOWED_PRODUCTS = [
   'តែទាបបារាំង (S)',
   'តែទាបបារាំង (M)',
-  'តែទាបបារាំង (L)'
+  'តែទាបបារាំង (L)',
+  'ទាបបារាំង'
 ]
 
-// Materials - added Labor, removed XL size support
+// Materials - តែ is back as sized material (grams), ទាបបារាំង is separate kg-based
 const ALLOWED_MATERIALS = [
-  'Plastic bag',
-  'Package bag',
-  'Box',
-  'Card',
-  'Tea',
-  'Labor'
+  'ថង់',
+  'កេស',
+  'ថង់វេចខ្ចប់',
+  'ប្រអប់',
+  'Leafleap',
+  'ទាបបារាំង',
+  'ពលកម្ម'
 ]
 
-// Materials that use sizes (S, M, L) - Labor and Plastic bag do NOT
-const SIZED_MATERIALS = ['Package bag', 'Box', 'Card', 'Tea', 'Labor']
+// Materials that use sizes (S, M, L)
+const SIZED_MATERIALS = ['ថង់វេចខ្ចប់', 'ប្រអប់', 'Leafleap']
+
+// Labor - price-only, unlimited use
+const LABOR_MATERIALS = ['ពលកម្ម']
+
+// Materials that are kg-based (no size)
+const KG_MATERIALS = ['ទាបបារាំង']
+
+// Materials that are no-size but quantity-based (not kg)
+const NOSIZE_MATERIALS = ['ថង់', 'កេស']
+
+// Tea grams per product size
+const TEA_GRAMS_PER_SIZE = {
+  S: 100,
+  M: 200,
+  L: 500
+}
 
 // Extract size from product name
 function getSizeFromProductName(name) {
@@ -100,10 +118,13 @@ export const useStockStore = defineStore('stock', () => {
 
     let totalCost = 0
 
-    // All sized materials: Package bag, Box, Card, Tea, Labor
+    // Sized materials: Package bag, Box, Card
     SIZED_MATERIALS.forEach(matName => {
       totalCost += getMaterialUnitCost(matName, size)
     })
+
+    // Labor - stored price only, unlimited use
+    totalCost += getMaterialUnitCost('ពលកម្ម', size)
 
     return totalCost
   }
@@ -118,21 +139,39 @@ export const useStockStore = defineStore('stock', () => {
     }
     stockItems.value.push(newProduct)
 
-    // Deduct physical materials 1:1 for each unit added
+    // Deduct materials based on product type
     const size = getSizeFromProductName(productData.name)
     const qty = Number(productData.quantity) || 1
-    if (size && qty > 0) {
-      // Deduct sized materials: Package bag, Box, Card, Tea (physical items)
-      SIZED_MATERIALS.forEach(matName => {
-        if (matName !== 'Labor') {
-          materialStockOut({
-            materialName: matName,
-            size: size,
-            quantity: qty,
-            notes: `ផលិតផលបញ្ចូលស្តុក - ${productData.name} x${qty}`
-          })
-        }
+
+    if (productData.name === 'ទាបបារាំង') {
+      // ទាបបារាំង standalone product: deduct ទាបបារាំង material in kg
+      materialStockOut({
+        materialName: 'ទាបបារាំង',
+        size: 'N/A',
+        quantity: qty,
+        notes: `ផលិតផលបញ្ចូលស្តុក - ${productData.name} x${qty}`
       })
+    } else if (size && qty > 0) {
+      // តែទាបបារាំង (S/M/L): deduct packaging materials 1:1
+      SIZED_MATERIALS.forEach(matName => {
+        materialStockOut({
+          materialName: matName,
+          size: size,
+          quantity: qty,
+          notes: `ផលិតផលបញ្ចូលស្តុក - ${productData.name} x${qty}`
+        })
+      })
+
+      // Deduct តែ (tea) - tracked as out transaction for display
+      const teaGrams = (TEA_GRAMS_PER_SIZE[size] || 0) * qty
+      if (teaGrams > 0) {
+        materialStockOut({
+          materialName: 'តែ',
+          size: size,
+          quantity: teaGrams,
+          notes: `ផលិតផលបញ្ចូលស្តុក - ${productData.name} x${qty} (${teaGrams}g តែ)`
+        })
+      }
     }
     return newProduct
   }
@@ -175,7 +214,11 @@ export const useStockStore = defineStore('stock', () => {
 
   // --- Material Functions ---
   function materialStockIn(data) {
-    const size = data.materialName === 'Plastic bag' ? 'N/A' : data.size
+    // Determine size based on material type
+    let size = data.size
+    if (data.materialName === 'ទាបបារាំង' || data.materialName === 'ថង់' || data.materialName === 'កេស') {
+      size = 'N/A'
+    }
 
     const transaction = {
       id: generateId(),
@@ -194,7 +237,10 @@ export const useStockStore = defineStore('stock', () => {
   }
 
   function materialStockOut(data) {
-    const size = data.materialName === 'Plastic bag' ? 'N/A' : data.size
+    let size = data.size
+    if (data.materialName === 'ទាបបារាំង' || data.materialName === 'ថង់' || data.materialName === 'កេស') {
+      size = 'N/A'
+    }
 
     const transaction = {
       id: generateId(),
@@ -214,7 +260,16 @@ export const useStockStore = defineStore('stock', () => {
 
   function deductPlasticBag(quantity = 1, orderNumber = '') {
     return materialStockOut({
-      materialName: 'Plastic bag',
+      materialName: 'ថង់',
+      size: 'N/A',
+      quantity: Number(quantity),
+      notes: orderNumber ? `បានកាត់ចេញតាមការកម្មង់លេខ: ${orderNumber}` : 'បានកាត់ចេញដោយស្វ័យប្រវត្តិតាមរយៈការលក់'
+    })
+  }
+
+  function deductCaseBox(quantity = 1, orderNumber = '') {
+    return materialStockOut({
+      materialName: 'កេស',
       size: 'N/A',
       quantity: Number(quantity),
       notes: orderNumber ? `បានកាត់ចេញតាមការកម្មង់លេខ: ${orderNumber}` : 'បានកាត់ចេញដោយស្វ័យប្រវត្តិតាមរយៈការលក់'
@@ -223,7 +278,7 @@ export const useStockStore = defineStore('stock', () => {
 
   function returnPlasticBag(quantity = 1, orderNumber = '') {
     const txIndex = materialTransactions.value.findIndex(tx => 
-      tx.materialName === 'Plastic bag' && 
+      tx.materialName === 'ថង់' && 
       tx.type === 'out' && 
       tx.notes && tx.notes.includes(orderNumber)
     )
@@ -241,7 +296,7 @@ export const useStockStore = defineStore('stock', () => {
     }
 
     return materialStockIn({
-      materialName: 'Plastic bag',
+      materialName: 'ថង់',
       size: 'N/A',
       quantity: Number(quantity),
       unitPrice: 0,
@@ -250,6 +305,37 @@ export const useStockStore = defineStore('stock', () => {
       notes: orderNumber ? `បានបន្ថែមវិញពីការបោះបង់ការកម្មង់លេខ: ${orderNumber}` : 'បានបន្ថែមវិញពីការបោះបង់ការកម្មង់'
     })
   }
+
+  function returnCaseBox(quantity = 1, orderNumber = '') {
+    const txIndex = materialTransactions.value.findIndex(tx => 
+      tx.materialName === 'កេស' && 
+      tx.type === 'out' && 
+      tx.notes && tx.notes.includes(orderNumber)
+    )
+
+    if (txIndex !== -1) {
+      materialTransactions.value[txIndex] = {
+        ...materialTransactions.value[txIndex],
+        quantity: 0,
+        notes: orderNumber ? 
+          `បានបន្ថែមវិញពីការបោះបង់ការកម្មង់លេខ: ${orderNumber} (ត្រឡប់វិញ)` : 
+          'បានបន្ថែមវិញពីការបោះបង់ការកម្មង់ (ត្រឡប់វិញ)',
+        updatedAt: new Date()
+      }
+      return materialTransactions.value[txIndex]
+    }
+
+    return materialStockIn({
+      materialName: 'កេស',
+      size: 'N/A',
+      quantity: Number(quantity),
+      unitPrice: 0,
+      totalPrice: 0,
+      date: new Date(),
+      notes: orderNumber ? `បានបន្ថែមវិញពីការបោះបង់ការកម្មង់លេខ: ${orderNumber}` : 'បានបន្ថែមវិញពីការបោះបង់ការកម្មង់'
+    })
+  }
+
 
   function deductMaterialsBySize(size, amount = 1) {
     SIZED_MATERIALS.forEach(matName => {
@@ -294,6 +380,8 @@ export const useStockStore = defineStore('stock', () => {
     materialStockOut,
     deductPlasticBag,
     returnPlasticBag,
+    deductCaseBox,
+    returnCaseBox,
     deductMaterialsBySize,
     deleteMaterialTransaction,
     getMaterialTransactions,
@@ -302,6 +390,10 @@ export const useStockStore = defineStore('stock', () => {
     ALLOWED_PRODUCTS,
     ALLOWED_MATERIALS,
     SIZED_MATERIALS,
+    KG_MATERIALS,
+    NOSIZE_MATERIALS,
+    LABOR_MATERIALS,
+    TEA_GRAMS_PER_SIZE,
     getSizeFromProductName
   }
-})  
+})

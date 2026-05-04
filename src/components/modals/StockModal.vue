@@ -108,8 +108,8 @@ function submit() {
               </select>
               <small v-if="autoCostPrice > 0" class="cost-hint">
                 <i class="fas fa-calculator"></i>
-                តម្លៃវត្ថុធាតុដើមសរុប: {{ autoCostPrice.toFixed(2) }} $ (Package bag + Box + Card +
-                Tea + Labor)
+                តម្លៃវត្ថុធាតុដើមសរុប: {{ autoCostPrice.toFixed(2) }} $ (ថង់វេចខ្ចប់ + ប្រអប់ + Leafleap +
+                តែ + ពលកម្ម)
               </small>
             </div>
 

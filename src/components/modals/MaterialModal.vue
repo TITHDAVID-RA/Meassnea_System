@@ -12,12 +12,13 @@ const notes = ref('')
 
 // Material configuration: name, hasSize, onlyPrice (no qty, just unit price)
 const materialConfig = [
-  { key: 'packageBag', name: 'Package bag', hasSize: true, onlyPrice: false },
-  { key: 'box', name: 'Box', hasSize: true, onlyPrice: false },
-  { key: 'card', name: 'Card', hasSize: true, onlyPrice: false },
-  { key: 'tea', name: 'Tea', hasSize: true, onlyPrice: false },
-  { key: 'labor', name: 'Labor', hasSize: true, onlyPrice: true },
-  { key: 'plasticBag', name: 'Plastic bag', hasSize: false, onlyPrice: false }
+  { key: 'packageBag', name: 'ថង់វេចខ្ចប់', hasSize: true, onlyPrice: false },
+  { key: 'box', name: 'ប្រអប់', hasSize: true, onlyPrice: false },
+  { key: 'card', name: 'Leafleap', hasSize: true, onlyPrice: false },
+  { key: 'labor', name: 'ពលកម្ម', hasSize: true, onlyPrice: true },
+  { key: 'teaPowder', name: 'ទាបបារាំង', hasSize: false, onlyPrice: false, isKg: true },
+  { key: 'plasticBag', name: 'ថង់', hasSize: false, onlyPrice: false },
+  { key: 'caseBox', name: 'កេស', hasSize: false, onlyPrice: false }
 ]
 
 const sizeLabels = {
@@ -156,7 +157,9 @@ function close() {
                 <div class="size-grid">
                   <template v-if="mat.hasSize">
                     <div v-for="(label, size) in sizeLabels" :key="size" class="size-input-block">
-                      <label class="size-label">{{ label }}</label>
+                      <label class="size-label">
+                        {{ mat.key === 'packageBag' && size === 'M' ? 'កំប៉ុង (M)' : label }}
+                      </label>
                       <div class="input-pair" :class="{ 'price-only': mat.onlyPrice }">
                         <div class="input-wrap" v-if="!mat.onlyPrice">
                           <span class="input-prefix">ចំនួន</span>
@@ -191,14 +194,15 @@ function close() {
 
                   <template v-else>
                     <div class="size-input-block no-size">
-                      <label class="size-label">Default (N/A)</label>
-                      <div class="input-pair">
+                      <label class="size-label">{{ mat.isKg ? 'ចំនួន (kg)' : 'Default (N/A)' }}</label>
+                      <div class="input-pair" :class="{ 'single-row': mat.isKg }">
                         <div class="input-wrap">
-                          <span class="input-prefix">ចំនួន</span>
+                          <span class="input-prefix">{{ mat.isKg ? 'kg' : 'ចំនួន' }}</span>
                           <input 
                             type="number" 
                             v-model.number="formData[mat.key]['N/A'].qty" 
                             min="0" 
+                            step="0.01"
                             class="form-input qty-input"
                             placeholder="0"
                           >
@@ -214,6 +218,9 @@ function close() {
                             placeholder="0.00"
                           >
                         </div>
+                      </div>
+                      <div v-if="!mat.onlyPrice && formData[mat.key]['N/A'].qty > 0" class="line-total">
+                        = {{ (formData[mat.key]['N/A'].qty * formData[mat.key]['N/A'].price).toFixed(2) }} $
                       </div>
                     </div>
                   </template>
@@ -317,6 +324,10 @@ function close() {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.input-pair.single-row {
+  grid-template-columns: 1fr 1fr;
 }
 
 .input-wrap {

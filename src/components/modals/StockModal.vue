@@ -15,7 +15,7 @@ const name = ref('')
 const quantity = ref(1)
 const costPrice = ref(0)
 const sellingPrice = ref(0)
-const minStockLevel = ref(5)
+const minStockLevel = ref(0)
 const notes = ref('')
 
 // Products: S, M, L only (no XL), names in Khmer
@@ -37,7 +37,7 @@ watch(
       quantity.value = newVal.quantity
       costPrice.value = newVal.costPrice || 0
       sellingPrice.value = newVal.unitPrice || 0
-      minStockLevel.value = newVal.minStockLevel || 5
+      minStockLevel.value = newVal.minStockLevel || 0
       notes.value = newVal.notes || ''
     } else {
       resetForm()
@@ -61,7 +61,7 @@ function resetForm() {
   quantity.value = 1
   costPrice.value = 0
   sellingPrice.value = 0
-  minStockLevel.value = 5
+  minStockLevel.value = 0
   notes.value = ''
 }
 

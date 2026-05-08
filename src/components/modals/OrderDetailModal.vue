@@ -77,6 +77,10 @@ function close() {
               <span>ថ្លៃសេវាដឹកជញ្ជូន:</span>
               <strong>{{ formatCurrency(order.deliveryCost || 0) }}</strong>
             </div>
+            <div class="summary-row">
+              <span>ចំនួនកេស:</span>
+              <strong>{{ order.caseBoxQty || 0 }} កេស</strong>
+            </div>
             <div class="total-row">
               <span>សរុបចុងក្រោយ:</span>
               <span class="total-amount">{{ formatCurrency(order.total) }}</span>

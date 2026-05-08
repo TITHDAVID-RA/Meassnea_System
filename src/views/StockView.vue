@@ -85,11 +85,11 @@ function getKhmerMaterialName(name) {
     'plastic bag': 'ថង់',
     'case box': 'កេស',
     'package bag': 'ថង់វេចខ្ចប់',
-    'card': 'Leafleap',
-    'tea': 'តែ',
-    'teapowder': 'ទាបបារាំង',
+    card: 'Leafleap',
+    tea: 'តែ',
+    teapowder: 'ទាបបារាំង',
     'tea powder': 'ទាបបារាំង',
-    'labor': 'ពលកម្ម',
+    labor: 'ពលកម្ម',
   }
   const key = name?.toLowerCase()?.trim()
   return map[key] || name
@@ -155,7 +155,7 @@ const materialGroups = computed(() => {
   })
 
   // Add derived តែ (tea) group calculated from ទាបបារាំង
-  // 1kg ទាបបារាំង = 150g តែ, display in kg
+  // 1kg ទាបបារាំង = 150g តែ, display in grams with user-input price per gram
   const teaPowderGroup = groups['ទាបបារាំង']
   if (teaPowderGroup) {
     const naSize = teaPowderGroup.sizes['N/A']
@@ -168,10 +168,12 @@ const materialGroups = computed(() => {
           teaGramsTotalOut += tx.quantity
         })
 
-      // Convert to kg for display
-      const teaKgTotalIn = (naSize.totalIn * 150) / 1000
-      const teaKgTotalOut = teaGramsTotalOut / 1000
-      const teaKgBalance = ((naSize.balance * 150) - teaGramsTotalOut) / 1000
+      // Convert ទាបបារាំង kg to តែ grams: 1kg = 150g
+      const teaGramsTotalIn = naSize.totalIn * stockStore.TEA_POWDER_TO_TEA_GRAMS
+      const teaGramsBalance = (naSize.balance * stockStore.TEA_POWDER_TO_TEA_GRAMS) - teaGramsTotalOut
+
+      // Use user-input price per gram
+      const userTeaPricePerGram = stockStore.getTeaPricePerGram()
 
       groups['តែ'] = {
         materialName: 'តែ',
@@ -179,15 +181,16 @@ const materialGroups = computed(() => {
         sizes: {
           'N/A': {
             size: 'N/A',
-            totalIn: teaKgTotalIn,
-            totalOut: teaKgTotalOut,
-            balance: teaKgBalance,
+            totalIn: teaGramsTotalIn,
+            totalOut: teaGramsTotalOut,
+            balance: teaGramsBalance,
             totalSpent: naSize.totalSpent,
             transactions: [],
             isDerived: true,
-          }
+            teaPricePerGram: userTeaPricePerGram,
+          },
         },
-        totalQty: teaKgTotalIn,
+        totalQty: teaGramsTotalIn,
         totalValue: naSize.totalSpent,
         latestDate: teaPowderGroup.latestDate,
         isDerived: true,
@@ -197,6 +200,37 @@ const materialGroups = computed(() => {
 
   return Object.values(groups).sort((a, b) => a.materialName.localeCompare(b.materialName))
 })
+
+// Calculate material cost breakdown for a product size
+function getMaterialCostBreakdown(size) {
+  if (!size || !['S', 'M', 'L'].includes(size)) return []
+
+  const breakdown = []
+  const teaGrams = stockStore.TEA_GRAMS_PER_SIZE[size] || 0
+
+  // Sized materials (packaging)
+  stockStore.SIZED_MATERIALS.forEach(matName => {
+    const cost = stockStore.getMaterialUnitCost(matName, size)
+    if (cost > 0) {
+      breakdown.push({ name: matName, cost: cost, unit: 'ឯកតា' })
+    }
+  })
+
+  // Tea cost (user-input price per gram)
+  const teaPricePerGram = stockStore.getTeaPricePerGram()
+  if (teaGrams > 0 && teaPricePerGram > 0) {
+    const teaCost = teaGrams * teaPricePerGram / 100 // Convert to cost per 100g
+    breakdown.push({ name: `តែ (${teaGrams}g)`, cost: teaCost, unit: `${teaGrams}g` })
+  }
+
+  // Labor cost
+  const laborCost = stockStore.getMaterialUnitCost('ពលកម្ម', size)
+  if (laborCost > 0) {
+    breakdown.push({ name: 'ពលកម្ម', cost: laborCost, unit: 'ឯកតា' })
+  }
+
+  return breakdown
+}
 
 const totalRemainingQuantity = computed(() => {
   return filteredBatches.value.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)
@@ -260,7 +294,7 @@ function handleMaterialSave(data) {
 <template>
   <div class="page">
     <!-- Product Stock Section -->
-<div class="date-filter-card">
+    <div class="date-filter-card">
       <div class="left">
         <div class="search-box">
           <i class="fas fa-search search-icon"></i>
@@ -276,18 +310,18 @@ function handleMaterialSave(data) {
         </div>
       </div>
       <div class="right">
-        <!-- Fixed: Method call instead of inline logic[cite: 18] -->
         <button class="btn btn-secondary" @click="clearAllFilters">
           <i class="fas fa-times"></i> សម្អាត
-        </button>
-        <button class="btn btn-primary" @click="showAddStock">
-          <i class="fas fa-plus"></i> បញ្ចូលស្តុកថ្មី
         </button>
       </div>
     </div>
 
     <div class="card">
-      <div class="table-header"><h3>បញ្ជីស្តុកទំនិញ</h3></div>
+      <div class="table-header"><h3>បញ្ជីស្តុកទំនិញ</h3>
+              <button class="btn btn-primary" @click="showAddStock">
+          <i class="fas fa-plus"></i> បញ្ចូលស្តុកថ្មី
+        </button>
+      </div>
       <div class="table-container scrollable-table-container hide-scrollbar">
         <table class="table">
           <thead>
@@ -368,6 +402,27 @@ function handleMaterialSave(data) {
                       }}</strong>
                     </div>
                   </div>
+                  <!-- Material Cost Breakdown -->
+                  <div v-if="item.name !== 'ទាបបារាំង'" class="material-cost-breakdown">
+                    <div class="breakdown-header">
+                      <i class="fas fa-calculator"></i>
+                      <span>គម្លាតតម្លៃវត្ថុធាតុដើម</span>
+                    </div>
+                    <div class="breakdown-grid">
+                      <div 
+                        v-for="(mat, idx) in getMaterialCostBreakdown(item.name.match(/\((S|M|L)\)/)?.[1])" 
+                        :key="idx"
+                        class="breakdown-item"
+                      >
+                        <span class="breakdown-name">{{ mat.name }}</span>
+                        <span class="breakdown-cost">{{ formatCurrency(mat.cost) }}</span>
+                      </div>
+                      <div class="breakdown-item total">
+                        <span class="breakdown-name">សរុបថ្លៃដើមវត្ថុធាតុដើម</span>
+                        <span class="breakdown-cost">{{ formatCurrency(getMaterialCostBreakdown(item.name.match(/\((S|M|L)\)/)?.[1]).reduce((s, m) => s + m.cost, 0)) }}</span>
+                      </div>
+                    </div>
+                  </div>
                 </td>
               </tr>
             </template>
@@ -386,14 +441,20 @@ function handleMaterialSave(data) {
     </div>
 
     <!-- Material Stock Section -->
-    <div class="page-header material-header">
+    <!-- <div class="page-header material-header">
+      <div class="table-header"><h3>ស្តុកវត្ថុធាតុដើម</h3></div>
       <button class="btn btn-success" @click="showMaterialIn">
         <i class="fas fa-plus-circle"></i> ទិញចូលថ្មី
       </button>
-    </div>
+    </div> -->
 
     <div class="card">
-      <div class="table-header"><h3>ស្តុកវត្ថុធាតុដើម</h3></div>
+        <div class="table-header"><h3>ស្តុកវត្ថុធាតុដើម</h3>
+        <button class="btn btn-success" @click="showMaterialIn">
+        <i class="fas fa-plus-circle"></i> ទិញចូលថ្មី
+      </button>
+      </div>
+
       <div class="table-container scrollable-table-container hide-scrollbar">
         <table class="table material-table" v-if="materialGroups.length > 0">
           <thead>
@@ -411,7 +472,10 @@ function handleMaterialSave(data) {
               <tr
                 class="material-main-row"
                 @click="!group.isDerived && toggleMaterialExpand(group.materialName)"
-                :class="{ expanded: expandedMaterial === group.materialName, 'derived-row': group.isDerived }"
+                :class="{
+                  expanded: expandedMaterial === group.materialName,
+                  'derived-row': group.isDerived,
+                }"
               >
                 <td>
                   <div class="material-name-cell">
@@ -430,23 +494,36 @@ function handleMaterialSave(data) {
                   </div>
                 </td>
                 <td>
-                  <span v-if="!group.isDerived" class="size-count-badge">{{ Object.keys(group.sizes).length }} ទំហំ</span>
-                  <span v-else class="derived-formula"></span>
+                  <span v-if="!group.isDerived" class="size-count-badge"
+                    >{{ Object.keys(group.sizes).length }} ទំហំ</span
+                  >
+                  <span v-else class="derived-formula">1kg ទាបបារាំង = 150g តែ</span>
                 </td>
                 <td>
-                  <strong class="total-qty" :class="{ 'derived-qty': group.isDerived, 'labor-qty': group.materialName === 'ពលកម្ម' }">
+                  <strong
+                    class="total-qty"
+                    :class="{
+                      'derived-qty': group.isDerived,
+                      'labor-qty': group.materialName === 'ពលកម្ម',
+                    }"
+                  >
                     <template v-if="group.materialName === 'ពលកម្ម'">
                       {{ formatCurrency(Object.values(group.sizes)[0]?.avgPrice || 0) }}
                       <span class="unit-label">/ឯកតា</span>
                     </template>
+                    <template v-else-if="group.isDerived">
+                      {{ Object.values(group.sizes)[0]?.balance?.toFixed(1) / 1000 || 0 }} 
+                      <span class="unit-label">Kg</span>
+                    </template>
                     <template v-else>
                       {{ Object.values(group.sizes).reduce((sum, s) => sum + s.balance, 0) }}
-                      <span v-if="group.isDerived" class="unit-label">kg</span>
+                      <span v-if="group.materialName === 'ទាបបារាំង'" class="unit-label">kg</span>
                     </template>
                   </strong>
                 </td>
                 <td class="text-primary">
-                  <strong>{{ formatCurrency(group.totalValue) }}</strong>
+                  <strong v-if="group.isDerived">{{ formatCurrency(Object.values(group.sizes)[0]?.teaPricePerGram  || 0) }}/100g</strong>
+                  <strong v-else>{{ formatCurrency(group.totalValue) }}</strong>
                 </td>
                 <td class="text-right">
                   <span v-if="!group.isDerived" class="expand-hint">
@@ -467,18 +544,52 @@ function handleMaterialSave(data) {
                         v-for="sizeGroup in Object.values(group.sizes)"
                         :key="sizeGroup.size"
                         class="size-detail-card"
-                        :class="{ 'low-stock': sizeGroup.balance <= 10 }"
+                        :class="{ 'low-stock': sizeGroup.balance <= 10 && group.materialName !== 'ពលកម្ម' }"
                       >
-                        <div class="size-title">{{ sizeGroup.size === "M" && group.materialName === "ថង់វេចខ្ចប់" ? "កំប៉ុង (M)" : "ទំហំ " + sizeGroup.size }}</div>
+                        <div class="size-title">
+                          {{
+                            sizeGroup.size === 'M' && group.materialName === 'ថង់វេចខ្ចប់'
+                              ? 'កំប៉ុង (M)'
+                              : 'ទំហំ ' + sizeGroup.size
+                          }}
+                          <span v-if="group.isDerived" class="tea-price-hint">
+                            {{ formatCurrency(sizeGroup.teaPricePerGram * 100) }}/100g (ដោយដៃ)
+                          </span>
+                        </div>
                         <div class="size-stats">
                           <template v-if="group.materialName === 'ពលកម្ម'">
                             <div class="stat">
                               <span class="stat-label">តម្លៃជាមធ្យម</span>
-                              <span class="stat-value text-primary">{{ formatCurrency(sizeGroup.avgPrice) }}</span>
+                              <span class="stat-value text-primary">{{
+                                formatCurrency(sizeGroup.avgPrice)
+                              }}</span>
                             </div>
                             <div class="stat labor-note">
                               <span class="stat-label">សម្គាល់</span>
                               <span class="stat-value text-success">គ្មានការកំណត់</span>
+                            </div>
+                          </template>
+                          <template v-else-if="group.isDerived">
+                            <div class="stat">
+                              <span class="stat-label">នៅសល់</span>
+                              <span
+                                class="stat-value"
+                                :class="{ 'text-danger': sizeGroup.balance <= 0 }"
+                              >
+                                {{ sizeGroup.balance?.toFixed(1) || 0 }} g
+                              </span>
+                            </div>
+                            <div class="stat">
+                              <span class="stat-label">បានផលិត</span>
+                              <span class="stat-value text-success">+{{ sizeGroup.totalIn?.toFixed(1) || 0 }} g</span>
+                            </div>
+                            <div class="stat">
+                              <span class="stat-label">បានប្រើ</span>
+                              <span class="stat-value text-warning">-{{ sizeGroup.totalOut?.toFixed(1) || 0 }} g</span>
+                            </div>
+                            <div class="stat">
+                              <span class="stat-label">តម្លៃ/100g (ដោយដៃ)</span>
+                              <span class="stat-value text-primary">{{ formatCurrency(sizeGroup.teaPricePerGram) }}</span>
                             </div>
                           </template>
                           <template v-else>
@@ -489,6 +600,7 @@ function handleMaterialSave(data) {
                                 :class="{ 'text-danger': sizeGroup.balance <= 0 }"
                               >
                                 {{ sizeGroup.balance }}
+                                <span v-if="group.materialName === 'ទាបបារាំង'" class="stat-unit">kg</span>
                               </span>
                             </div>
                             <div class="stat">
@@ -501,13 +613,15 @@ function handleMaterialSave(data) {
                             </div>
                             <div class="stat">
                               <span class="stat-label">តម្លៃជាមធ្យម</span>
-                              <span class="stat-value">{{ formatCurrency(sizeGroup.avgPrice) }}</span>
+                              <span class="stat-value">{{
+                                formatCurrency(sizeGroup.avgPrice)
+                              }}</span>
                             </div>
                           </template>
                         </div>
 
                         <!-- Transaction History -->
-                        <div v-if="group.materialName !== 'ពលកម្ម'" class="tx-history">
+                        <div v-if="group.materialName !== 'ពលកម្ម' && !group.isDerived" class="tx-history">
                           <div class="tx-header">ប្រវត្តិប្រតិបត្តិការ</div>
                           <div class="tx-scroll hide-scrollbar">
                             <div
@@ -542,9 +656,22 @@ function handleMaterialSave(data) {
 </template>
 
 <style scoped>
+/* .header-table {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.table-header h3 {
+  font-size: 1.25rem;
+  justify-content: center;
+  pending-top: 10px;
+} */
+
 .date-filter-card {
   display: flex;
-  flex-direction: column; 
+  flex-direction: column;
   gap: 12px;
   padding: 16px;
   background: #ffffff;
@@ -563,14 +690,14 @@ function handleMaterialSave(data) {
 
 .right {
   display: flex;
-  flex-direction: column; 
+  flex-direction: column;
   gap: 8px;
   width: 100%;
 }
 
 .date-inputs {
   display: grid;
-  grid-template-columns: 1fr 1fr; /* Two columns for dates on mobile[cite: 18] */
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
   width: 100%;
 }
@@ -676,10 +803,10 @@ function handleMaterialSave(data) {
     font-size: 14px;
   }
 }
-/* Updated: Desktop layout restorations[cite: 18] */
+/* Updated: Desktop layout restorations */
 @media (min-width: 1024px) {
   .date-filter-card {
-    flex-direction: row; /* Side-by-side on desktop[cite: 18] */
+    flex-direction: row;
     justify-content: space-between;
     align-items: center;
     padding: 12px 20px;
@@ -696,7 +823,7 @@ function handleMaterialSave(data) {
   }
 
   .date-inputs {
-    grid-template-columns: auto auto; /* Flexible width on desktop[cite: 18] */
+    grid-template-columns: auto auto;
     width: auto;
   }
 
@@ -705,7 +832,7 @@ function handleMaterialSave(data) {
   }
 
   .right {
-    flex-direction: row; /* Horizontal buttons[cite: 18] */
+    flex-direction: row;
     width: auto;
     margin-left: 20px;
   }
@@ -741,6 +868,64 @@ function handleMaterialSave(data) {
   color: #64748b;
   display: block;
   margin-bottom: 2px;
+}
+
+/* Material Cost Breakdown */
+.material-cost-breakdown {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px dashed #cbd5e1;
+}
+
+.breakdown-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 10px;
+}
+
+.breakdown-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.breakdown-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.breakdown-item.total {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+  font-weight: 600;
+}
+
+.breakdown-name {
+  color: #64748b;
+}
+
+.breakdown-cost {
+  color: #15803d;
+  font-weight: 700;
+}
+
+.breakdown-item.total .breakdown-name {
+  color: #166534;
+}
+
+.breakdown-item.total .breakdown-cost {
+  color: #15803d;
+  font-size: 1rem;
 }
 
 /* Product info */
@@ -889,6 +1074,13 @@ function handleMaterialSave(data) {
   border-bottom: 1px solid #e2e8f0;
 }
 
+.tea-price-hint {
+  font-size: 0.75rem;
+  color: #16a34a;
+  font-weight: 500;
+  margin-left: 6px;
+}
+
 .size-stats {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -910,6 +1102,13 @@ function handleMaterialSave(data) {
 .stat-value {
   font-size: 0.95rem;
   font-weight: 700;
+}
+
+.stat-unit {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  font-weight: 500;
+  margin-left: 2px;
 }
 
 .text-success {
@@ -1057,6 +1256,4 @@ function handleMaterialSave(data) {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
-
-  
 </style>

@@ -252,7 +252,7 @@ function completeOrder(id) {
 
     <div class="card">
       <div class="table-header">
-        <h3>Orders</h3>
+        <h3>ការកម្មង់</h3>
         <div class="filter-actions">
           <select v-model="statusFilter">
             <option value="">All Status</option>

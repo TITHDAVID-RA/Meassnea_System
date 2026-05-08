@@ -43,6 +43,9 @@ const TEA_GRAMS_PER_SIZE = {
   L: 500
 }
 
+// Conversion: 1kg ទាបបារាំង = 150g តែ (for inventory display only)
+const TEA_POWDER_TO_TEA_GRAMS = 150
+
 // Extract size from product name
 function getSizeFromProductName(name) {
   const match = name.match(/\((S|M|L)\)/)
@@ -55,6 +58,9 @@ export const useStockStore = defineStore('stock', () => {
   const stockItems = useStorage('stockItems', [])
   const stockCategories = useStorage('stockCategories', defaultStockCategories)
   const materialTransactions = useStorage('materialTransactions', [])
+  
+  // User-input តែ price per gram (stored in localStorage)
+  const teaPricePerGram = useStorage('teaPricePerGram', 0)
 
   // --- Computed States ---
   const totalProducts = computed(() => stockItems.value.length)
@@ -63,7 +69,7 @@ export const useStockStore = defineStore('stock', () => {
   const lowStockCount = computed(() => stockItems.value.filter(item => item.quantity <= item.minStockLevel).length)
   const outOfStockCount = computed(() => stockItems.value.filter(item => item.quantity === 0).length)
 
-  const lowStockItems = computed(() => 
+  const lowStockItems = computed(() =>
     stockItems.value.filter(item => item.quantity <= item.minStockLevel).sort((a, b) => a.quantity - b.quantity)
   )
 
@@ -101,6 +107,16 @@ export const useStockStore = defineStore('stock', () => {
   const totalMaterialQuantity = computed(() => materialSummary.value.reduce((sum, m) => sum + m.balance, 0))
 
   // --- Material Cost Calculation ---
+  // Get តែ price per gram (USER INPUT stored as per-gram, input was per-100g)
+  function getTeaPricePerGram() {
+    return (Number(teaPricePerGram.value) || 0) * 100 ;
+  }
+
+  // Set/update តែ price per 100g (user input), stored as per gram internally
+  function setTeaPricePerGram(pricePer100g) {
+    teaPricePerGram.value = (Number(pricePer100g) || 0) / 100;
+  }
+
   // Get the average cost per unit for a specific material + size
   function getMaterialUnitCost(materialName, size = 'N/A') {
     const txs = materialTransactions.value
@@ -123,6 +139,13 @@ export const useStockStore = defineStore('stock', () => {
       totalCost += getMaterialUnitCost(matName, size)
     })
 
+    // Tea cost: grams needed × user-input price per gram
+    const teaGrams = TEA_GRAMS_PER_SIZE[size] || 0
+    const teaPrice = getTeaPricePerGram()
+    if (teaGrams > 0 && teaPrice > 0) {
+      totalCost += (teaGrams / 100) * teaPrice
+    }
+
     // Labor - stored price only, unlimited use
     totalCost += getMaterialUnitCost('ពលកម្ម', size)
 
@@ -130,51 +153,60 @@ export const useStockStore = defineStore('stock', () => {
   }
 
   // --- Product Functions ---
-  function addProduct(productData) {
-    const newProduct = {
-      id: generateId(),
-      ...productData,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    }
-    stockItems.value.push(newProduct)
+ function addProduct(productData) {
+  // 1. Move this to the top! Now 'size' is initialized and ready to use.
+  const size = getSizeFromProductName(productData.name)
+  const qty = Number(productData.quantity) || 1
+  
+  let calculatedCostPrice = productData.costPrice || 0
 
-    // Deduct materials based on product type
-    const size = getSizeFromProductName(productData.name)
-    const qty = Number(productData.quantity) || 1
+  // 2. Now this 'if' statement will work because 'size' is defined
+  if (size && ['S', 'M', 'L'].includes(size) && (!calculatedCostPrice || calculatedCostPrice <= 0)) {
+    calculatedCostPrice = getMaterialCostPerUnit(size)
+  }
 
-    if (productData.name === 'ទាបបារាំង') {
-      // ទាបបារាំង standalone product: deduct ទាបបារាំង material in kg
+  const newProduct = {
+    id: generateId(),
+    ...productData,
+    costPrice: calculatedCostPrice,
+    createdAt: new Date(),
+    updatedAt: new Date()
+  }
+  stockItems.value.push(newProduct)
+
+  // Deduct materials based on product type
+  if (productData.name === 'ទាបបារាំង') {
+    // ទាបបារាំង standalone product: deduct ទាបបារាំង material in kg
+    materialStockOut({
+      materialName: 'ទាបបារាំង',
+      size: 'N/A',
+      quantity: qty,
+      notes: `ផលិតផលបញ្ចូលស្តុក - ${productData.name} x${qty}`
+    })
+  } else if (size && qty > 0) {
+    // តែទាបបារាំង (S/M/L): deduct packaging materials 1:1
+    SIZED_MATERIALS.forEach(matName => {
       materialStockOut({
-        materialName: 'ទាបបារាំង',
-        size: 'N/A',
+        materialName: matName,
+        size: size,
         quantity: qty,
         notes: `ផលិតផលបញ្ចូលស្តុក - ${productData.name} x${qty}`
       })
-    } else if (size && qty > 0) {
-      // តែទាបបារាំង (S/M/L): deduct packaging materials 1:1
-      SIZED_MATERIALS.forEach(matName => {
-        materialStockOut({
-          materialName: matName,
-          size: size,
-          quantity: qty,
-          notes: `ផលិតផលបញ្ចូលស្តុក - ${productData.name} x${qty}`
-        })
-      })
+    })
 
-      // Deduct តែ (tea) - tracked as out transaction for display
-      const teaGrams = (TEA_GRAMS_PER_SIZE[size] || 0) * qty
-      if (teaGrams > 0) {
-        materialStockOut({
-          materialName: 'តែ',
-          size: size,
-          quantity: teaGrams,
-          notes: `ផលិតផលបញ្ចូលស្តុក - ${productData.name} x${qty} (${teaGrams}g តែ)`
-        })
-      }
+    // Deduct តែ (tea) - tracked as out transaction for display
+    const teaGrams = (TEA_GRAMS_PER_SIZE[size] || 0) * qty
+    if (teaGrams > 0) {
+      materialStockOut({
+        materialName: 'តែ',
+        size: size,
+        quantity: teaGrams,
+        notes: `ផលិតផលបញ្ចូលស្តុក - ${productData.name} x${qty} (${teaGrams}g តែ)`
+      })
     }
-    return newProduct
   }
+  return newProduct
+}
 
   function updateProduct(id, updates) {
     const index = stockItems.value.findIndex(item => item.id === id)
@@ -277,9 +309,9 @@ export const useStockStore = defineStore('stock', () => {
   }
 
   function returnPlasticBag(quantity = 1, orderNumber = '') {
-    const txIndex = materialTransactions.value.findIndex(tx => 
-      tx.materialName === 'ថង់' && 
-      tx.type === 'out' && 
+    const txIndex = materialTransactions.value.findIndex(tx =>
+      tx.materialName === 'ថង់' &&
+      tx.type === 'out' &&
       tx.notes && tx.notes.includes(orderNumber)
     )
 
@@ -287,8 +319,8 @@ export const useStockStore = defineStore('stock', () => {
       materialTransactions.value[txIndex] = {
         ...materialTransactions.value[txIndex],
         quantity: 0,
-        notes: orderNumber ? 
-          `បានបន្ថែមវិញពីការបោះបង់ការកម្មង់លេខ: ${orderNumber} (ត្រឡប់វិញ)` : 
+        notes: orderNumber ?
+          `បានបន្ថែមវិញពីការបោះបង់ការកម្មង់លេខ: ${orderNumber} (ត្រឡប់វិញ)` :
           'បានបន្ថែមវិញពីការបោះបង់ការកម្មង់ (ត្រឡប់វិញ)',
         updatedAt: new Date()
       }
@@ -307,9 +339,9 @@ export const useStockStore = defineStore('stock', () => {
   }
 
   function returnCaseBox(quantity = 1, orderNumber = '') {
-    const txIndex = materialTransactions.value.findIndex(tx => 
-      tx.materialName === 'កេស' && 
-      tx.type === 'out' && 
+    const txIndex = materialTransactions.value.findIndex(tx =>
+      tx.materialName === 'កេស' &&
+      tx.type === 'out' &&
       tx.notes && tx.notes.includes(orderNumber)
     )
 
@@ -317,8 +349,8 @@ export const useStockStore = defineStore('stock', () => {
       materialTransactions.value[txIndex] = {
         ...materialTransactions.value[txIndex],
         quantity: 0,
-        notes: orderNumber ? 
-          `បានបន្ថែមវិញពីការបោះបង់ការកម្មង់លេខ: ${orderNumber} (ត្រឡប់វិញ)` : 
+        notes: orderNumber ?
+          `បានបន្ថែមវិញពីការបោះបង់ការកម្មង់លេខ: ${orderNumber} (ត្រឡប់វិញ)` :
           'បានបន្ថែមវិញពីការបោះបង់ការកម្មង់ (ត្រឡប់វិញ)',
         updatedAt: new Date()
       }
@@ -362,6 +394,7 @@ export const useStockStore = defineStore('stock', () => {
     stockItems,
     stockCategories,
     materialTransactions,
+    teaPricePerGram,
     totalProducts,
     totalQuantity,
     totalValue,
@@ -387,6 +420,8 @@ export const useStockStore = defineStore('stock', () => {
     getMaterialTransactions,
     getMaterialCostPerUnit,
     getMaterialUnitCost,
+    getTeaPricePerGram,
+    setTeaPricePerGram,
     ALLOWED_PRODUCTS,
     ALLOWED_MATERIALS,
     SIZED_MATERIALS,
@@ -394,6 +429,7 @@ export const useStockStore = defineStore('stock', () => {
     NOSIZE_MATERIALS,
     LABOR_MATERIALS,
     TEA_GRAMS_PER_SIZE,
+    TEA_POWDER_TO_TEA_GRAMS,
     getSizeFromProductName
   }
 })

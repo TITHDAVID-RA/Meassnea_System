@@ -313,6 +313,9 @@ function save() {
 .close-btn:hover { background: #e2e8f0; color: #1e293b; }
 .modal__body { padding: 24px; flex: 1; overflow-y: auto; }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+@media (max-width: 640px) {
+  .form-row { grid-template-columns: 1fr; }
+}
 .form-group { display: flex; flex-direction: column; gap: 6px; }
 .form-group label { font-size: 0.875rem; font-weight: 600; color: #374151; }
 .form-input, .form-select { width: 100%; padding: 10px 14px; border: 1.5px solid #d1d5db; border-radius: 8px; font-size: 0.95rem; }
@@ -322,7 +325,42 @@ function save() {
 .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 .btn-add-item { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: #3b82f6; color: white; border: none; border-radius: 8px; cursor: pointer; }
 .items-list { display: flex; flex-direction: column; gap: 12px; }
-.order-item-row { display: grid; grid-template-columns: 1fr 80px 90px 100px 40px; gap: 10px; align-items: center; padding: 12px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0; }
+.order-item-row { 
+  display: grid; 
+  grid-template-columns: 1fr 80px 90px 100px 40px; 
+  gap: 10px; 
+  align-items: center; 
+  padding: 12px; 
+  background: #f8fafc; 
+  border-radius: 8px; 
+  border: 1px solid #e2e8f0; 
+}
+
+@media (max-width: 640px) {
+  .order-item-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .item-product select {
+    width: 100%;
+    min-width: 0;
+  }
+  .item-qty, .item-cost, .item-price {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .item-qty::before { content: 'ចំនួន:'; font-size: 0.85rem; color: #64748b; font-weight: 500; }
+  .item-cost::before { content: 'តម្លៃដើម:'; font-size: 0.85rem; color: #64748b; font-weight: 500; }
+  .item-price::before { content: 'តម្លៃលក់:'; font-size: 0.85rem; color: #64748b; font-weight: 500; }
+  .item-qty input, .item-cost input, .item-price input {
+    flex: 1;
+  }
+  .remove-item-btn {
+    width: 100%;
+    margin-top: 4px;
+  }
+}
 .remove-item-btn { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: #fee2e2; color: #dc2626; border: none; border-radius: 8px; cursor: pointer; }
 .order-summary-footer { margin-top: 20px; padding: 16px 20px; background: #f0fdf4; border-radius: 10px; border: 1px solid #bbf7d0; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .summary-item.total { font-size: 1.3rem; font-weight: 800; color: #15803d; }

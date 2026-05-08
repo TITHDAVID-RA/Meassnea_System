@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
+import { useStockStore } from '@/stores/stockStore'
 
 const props = defineProps({
   modelValue: Boolean
@@ -7,8 +8,13 @@ const props = defineProps({
 
 const emit = defineEmits(['update:modelValue', 'save'])
 
+const stockStore = useStockStore()
+
 const date = ref(new Date().toISOString().split('T')[0])
 const notes = ref('')
+
+// តែ price per gram (user input, stored in stockStore)
+const teaPricePerGram = ref(stockStore.getTeaPricePerGram())
 
 // Material configuration: name, hasSize, onlyPrice (no qty, just unit price)
 const materialConfig = [
@@ -27,6 +33,13 @@ const sizeLabels = {
   L: 'ធំ (L)'
 }
 
+// Tea grams per product size (for display)
+const teaGramsPerSize = {
+  S: 100,
+  M: 200,
+  L: 500
+}
+
 // Data structure
 const formData = ref({})
 
@@ -43,6 +56,8 @@ function initForm() {
     }
   })
   formData.value = obj
+  // Load current tea price
+  teaPricePerGram.value = stockStore.getTeaPricePerGram()
 }
 
 initForm()
@@ -51,6 +66,7 @@ watch(() => props.modelValue, (visible) => {
   if (visible) {
     date.value = new Date().toISOString().split('T')[0]
     notes.value = ''
+    teaPricePerGram.value = stockStore.getTeaPricePerGram()
     initForm()
   }
 })
@@ -114,6 +130,9 @@ function submit() {
     })
   })
 
+  // Save តែ price per gram to stockStore
+  stockStore.setTeaPricePerGram(teaPricePerGram.value)
+
   emit('save', { date: new Date(date.value), entries, grandTotal: grandTotal.value, notes: notes.value })
   close()
 }
@@ -143,6 +162,47 @@ function close() {
               <div class="form-group notes-group">
                 <label>កំណត់សម្គាល់</label>
                 <input type="text" v-model="notes" placeholder="កំណត់សម្គាល់..." class="form-input">
+              </div>
+            </div>
+
+            <!-- តែ Price Per Gram - User Input -->
+            <div class="tea-price-section">
+              <div class="tea-price-header">
+                <i class="fas fa-leaf"></i>
+                <strong>តម្លៃតែ (គណនាដោយដៃ)</strong>
+              </div>
+              <div class="tea-price-body">
+                <div class="tea-price-input-wrap">
+                  <label class="tea-price-label">តម្លៃតែ ក្នុងមួយ 100ក្រាម ($/100g)</label>
+                  <div class="input-wrap">
+                    <span class="input-prefix">$/100g</span>
+                    <input 
+                      type="number" 
+                      v-model.number="teaPricePerGram" 
+                      min="0" 
+                      step="0.01"
+                      class="form-input tea-price-input"
+                      placeholder="0.00"
+                    >
+                  </div>
+                </div>
+                <div class="tea-cost-preview" v-if="teaPricePerGram > 0">
+                  <div class="preview-title">តម្លៃតែក្នុងមួយផលិតផល (តម្លៃ/100g):</div>
+                  <div class="preview-grid">
+                    <div class="preview-item">
+                      <span class="preview-size">S ({{ teaGramsPerSize.S }}g)</span>
+                      <span class="preview-cost">{{ (teaPricePerGram * (teaGramsPerSize.S / 100)).toFixed(2) }} $</span>
+                    </div>
+                    <div class="preview-item">
+                      <span class="preview-size">M ({{ teaGramsPerSize.M }}g)</span>
+                      <span class="preview-cost">{{ (teaPricePerGram * (teaGramsPerSize.M / 100)).toFixed(2) }} $</span>
+                    </div>
+                    <div class="preview-item">
+                      <span class="preview-size">L ({{ teaGramsPerSize.L }}g)</span>
+                      <span class="preview-cost">{{ (teaPricePerGram * (teaGramsPerSize.L / 100)).toFixed(2) }} $</span>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -262,6 +322,92 @@ function close() {
   margin-bottom: 20px;
   padding-bottom: 16px;
   border-bottom: 2px solid #e2e8f0;
+}
+
+/* Tea Price Section */
+.tea-price-section {
+  background: #f0fdf4;
+  border: 2px solid #bbf7d0;
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.tea-price-header {
+  background: #166534;
+  color: white;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.95rem;
+}
+
+.tea-price-header i {
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+
+.tea-price-body {
+  padding: 14px;
+}
+
+.tea-price-input-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tea-price-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #166534;
+}
+
+.tea-price-input {
+  padding-left: 55px !important;
+  max-width: 200px;
+}
+
+.tea-cost-preview {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #86efac;
+}
+
+.preview-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #15803d;
+  margin-bottom: 8px;
+}
+
+.preview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.preview-item {
+  background: white;
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.preview-size {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.preview-cost {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #15803d;
 }
 
 .materials-grid {
@@ -517,6 +663,9 @@ function close() {
     grid-template-columns: 1fr;
   }
   .top-row {
+    grid-template-columns: 1fr;
+  }
+  .preview-grid {
     grid-template-columns: 1fr;
   }
 }

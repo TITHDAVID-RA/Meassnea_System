@@ -9,7 +9,7 @@
     <div class="sidebar-header">
       <div class="logo">
         <img
-          src="C:\Users\RATithdavid\Desktop\Meassnea\Final\Vue.js\Meassnea-system\src\assets\មាសស្នេហ៍_final-01-removebg-preview.png"
+          src="../assets/មាសស្នេហ៍_final-01-removebg-preview.png"
           alt="MEASSNEA"
           class="logo-img"
         />

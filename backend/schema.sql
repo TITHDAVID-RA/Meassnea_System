@@ -1,4 +1,3 @@
-
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS users (
@@ -10,7 +9,6 @@ CREATE TABLE IF NOT EXISTS users (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
-
 
 CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY,
@@ -183,7 +181,6 @@ CREATE TABLE IF NOT EXISTS categories (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- Seed default categories
 INSERT OR IGNORE INTO categories (id, name, type) VALUES
   ('inc_1', 'លក់ផលិតផល', 'income'),
   ('inc_2', 'សេវាកម្ម', 'income'),

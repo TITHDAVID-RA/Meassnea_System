@@ -3,7 +3,6 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useOrderStore } from '@/stores/orderStore'
 import { useStockStore } from '@/stores/stockStore'
 import { useIncomeStore } from '@/stores/incomeStore'
-import { useInventoryStore } from '@/stores/inventoryStore'
 import { useFormatters } from '@/composables/useFormatters'
 import StatCard from '@/components/StatCard.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -13,7 +12,6 @@ import OrderDetailModal from '@/components/modals/OrderDetailModal.vue'
 const orderStore = useOrderStore()
 const stockStore = useStockStore()
 const incomeStore = useIncomeStore()
-const inventoryStore = useInventoryStore()
 const { formatCurrency, formatDate } = useFormatters()
 
 const search = ref('')
@@ -35,8 +33,26 @@ const closeMenus = (e) => {
   if (!e.target.closest('.action-wrapper')) activeMenuId.value = null
 }
 
-onMounted(() => window.addEventListener('click', closeMenus))
-onUnmounted(() => window.removeEventListener('click', closeMenus))
+// ── SYNC WITH D1 DATABASE ON MOUNT ──
+onMounted(async () => {
+  window.addEventListener('click', closeMenus)
+  try {
+    const promises = []
+    if (orderStore.orders.length === 0) promises.push(orderStore.fetchOrders())
+    if (stockStore.stockItems.length === 0) promises.push(stockStore.fetchStockData())
+    if (incomeStore.incomes.length === 0) promises.push(incomeStore.fetchIncomes())
+    
+    if (promises.length > 0) {
+      await Promise.all(promises)
+    }
+  } catch (error) {
+    console.error('Failed to load initial orders view data from D1:', error)
+  }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('click', closeMenus)
+})
 
 const filteredOrders = computed(() => {
   return orderStore.orders
@@ -100,7 +116,7 @@ const totals = computed(() => {
       plasticBagCost: 0,
       caseBoxCost: 0,
       deliveryCost: 0,
-    },
+    }
   )
 })
 
@@ -146,90 +162,102 @@ function viewDetails(id) {
  * - Pending: just cancel, stock already deducted on creation
  * - Completed: return product stock + plastic bags, remove income
  */
-function cancelOrder(id) {
+async function cancelOrder(id) {
   if (!confirm('តើអ្នកប្រាកដជាចង់បោះបង់ការកម្មង់នេះមែនទេ?')) return
   const order = orderStore.getOrderById(id)
   if (!order) return
 
-  // Return product stock to inventory (for both pending and completed)
-  order.items.forEach((item) => {
-    const product = stockStore.getProductById(item.productId)
-    if (product) {
-      const previousQty = product.quantity
-      stockStore.adjustStock(item.productId, item.quantity, 'in')
-      inventoryStore.recordMovement({
-        productId: product.id,
-        productName: product.name,
-        type: 'return',
-        quantity: item.quantity,
-        previousQuantity: previousQty,
-        newQuantity: product.quantity,
-        unitPrice: item.unitPrice,
-        totalValue: item.total,
-        reference: order.orderNumber,
-        referenceId: order.id,
-        notes: 'Order cancelled - stock returned',
-      })
+  try {
+    // Return product stock to inventory (for both pending and completed)
+    for (const item of order.items) {
+      const product = stockStore.getProductById(item.productId)
+      if (product) {
+        const previousQty = product.quantity
+        await stockStore.adjustStock(item.productId, item.quantity, 'in')
+        
+        // Use stockStore.recordMovement instead of inventoryStore
+        await stockStore.recordMovement({
+          productId: product.id,
+          productName: product.name,
+          type: 'return',
+          quantity: item.quantity,
+          previousQuantity: previousQty,
+          newQuantity: product.quantity,
+          unitPrice: item.unitPrice,
+          totalValue: item.total,
+          reference: order.orderNumber,
+          referenceId: order.id,
+          notes: 'Order cancelled - stock returned',
+        })
+      }
     }
-  })
 
-  // Return plastic bags (update original deduction row, don't create new)
-  const pbQty = Number(order.plasticBagQty) || 0
-  if (pbQty > 0) {
-    stockStore.returnPlasticBag(pbQty, order.orderNumber)
+    // Return plastic bags (update original deduction row, don't create new)
+    const pbQty = Number(order.plasticBagQty) || 0
+    if (pbQty > 0) {
+      await stockStore.returnPlasticBag(pbQty, order.orderNumber)
+    }
+
+    // Return case boxes (update original deduction row, don't create new)
+    const cbQty = Number(order.caseBoxQty) || 0
+    if (cbQty > 0) {
+      await stockStore.returnCaseBox(cbQty, order.orderNumber)
+    }
+
+    // If was completed, remove the income record
+    if (order.status === 'completed') {
+      const targetIncome = incomeStore.incomes.find((i) => i.orderId === id)
+      if (targetIncome) {
+        await incomeStore.deleteIncome(targetIncome.id)
+      }
+    }
+
+    await orderStore.cancelOrder(id)
+    activeMenuId.value = null
+  } catch (error) {
+    alert('មានបញ្ហាក្នុងការលុបចោលការបញ្ជាទិញ!')
   }
-
-  // Return case boxes (update original deduction row, don't create new)
-  const cbQty = Number(order.caseBoxQty) || 0
-  if (cbQty > 0) {
-    stockStore.returnCaseBox(cbQty, order.orderNumber)
-  }
-
-  // If was completed, remove the income record
-  if (order.status === 'completed') {
-    const incomeIndex = incomeStore.incomes.findIndex((i) => i.orderId === id)
-    if (incomeIndex !== -1) incomeStore.incomes.splice(incomeIndex, 1)
-  }
-
-  orderStore.cancelOrder(id)
-  activeMenuId.value = null
 }
 
 /**
  * COMPLETE ORDER
  * - Pending -> Completed: just add income (stock already deducted on creation)
  */
-function completeOrder(id) {
+async function completeOrder(id) {
   const order = orderStore.getOrderById(id)
   if (!order || order.status !== 'pending') return
 
-  // Stock was already deducted when order was created
-  // Just add income and update status
-  orderStore.completeOrder(id)
+  try {
+    // Stock was already deducted when order was created
+    // Just add income and update status inside D1
+    await orderStore.completeOrder(id)
 
-  // Income = product total - delivery - bags - costPrice
-  const breakdown = getOrderBreakdown(order)
-  const incomeAmount = Math.max(
-    0,
-    breakdown.productTotal -
-    breakdown.deliveryCost -
-    breakdown.plasticBagCost -
-    breakdown.caseBoxCost -
-    breakdown.totalCostPrice
-  )
+    // Income = product total - delivery - bags - costPrice
+    const breakdown = getOrderBreakdown(order)
+    const incomeAmount = Math.max(
+      0,
+      breakdown.productTotal -
+      breakdown.deliveryCost -
+      breakdown.plasticBagCost -
+      breakdown.caseBoxCost -
+      breakdown.totalCostPrice
+    )
 
-  incomeStore.addIncome({
-    date: new Date(),
-    amount: incomeAmount,
-    category: 'លក់ផលិតផល',
-    paymentMethod: order.paymentMethod,
-    description: `${order.orderNumber}`,
-    customer: order.customer,
-    reference: order.orderNumber,
-    orderId: order.id,
-  })
+    await incomeStore.addIncome({
+      date: new Date(),
+      amount: incomeAmount,
+      category: 'លក់ផលិតផល',
+      paymentMethod: order.paymentMethod,
+      description: `${order.orderNumber}`,
+      customer: order.customer,
+      reference: order.orderNumber,
+      orderId: order.id,
+    })
 
-  activeMenuId.value = null
+    activeMenuId.value = null
+  } catch (error) {
+    alert('មានបញ្ហាក្នុងការបញ្ចប់ការបញ្ជាទិញ!')
+  }
 }
 </script>
 

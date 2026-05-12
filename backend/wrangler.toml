@@ -1,8 +1,8 @@
 name = "meassnea"
-main = "src/main.js" 
+main = "./src/index.js" 
 compatibility_date = "2026-04-28"
 
 [[d1_databases]]
 binding = "meassnea_db" 
-database_name = "meassnea-db"
+database_name = "meassnea-db_v2"
 database_id = "2a168fee-2291-432a-9643-bfcfb1ea1fed"

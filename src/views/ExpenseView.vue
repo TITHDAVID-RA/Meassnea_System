@@ -21,6 +21,22 @@ const editingExpense = ref(null)
 // Dropdown State for 3-dots
 const activeDropdown = ref(null)
 
+onMounted(async () => {
+  window.addEventListener('click', closeDropdowns)
+  try {
+    // Only fetch if empty
+    if (expenseStore.expenses.length === 0) {
+      await expenseStore.fetchExpenses()
+    }
+  } catch (error) {
+    console.error('Failed to load initial expense view data from D1:', error)
+  }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('click', closeDropdowns)
+})
+
 /**
  * Filter and Sort Logic (Unchanged)
  */
@@ -62,9 +78,6 @@ function closeDropdowns(e) {
   }
 }
 
-onMounted(() => window.addEventListener('click', closeDropdowns))
-onUnmounted(() => window.removeEventListener('click', closeDropdowns))
-
 function showAddExpense() {
   editingExpense.value = null
   showModal.value = true
@@ -76,19 +89,29 @@ function editExpense(item) {
   activeDropdown.value = null
 }
 
-function saveExpense(data) {
-  if (editingExpense.value) {
-    expenseStore.updateExpense(editingExpense.value.id, data)
-  } else {
-    expenseStore.addExpense(data)
+// Updated to asynchronously save updates to D1
+async function saveExpense(data) {
+  try {
+    if (editingExpense.value) {
+      await expenseStore.updateExpense(editingExpense.value.id, data)
+    } else {
+      await expenseStore.addExpense(data)
+    }
+    showModal.value = false
+  } catch (error) {
+    alert('មានបញ្ហាក្នុងការរក្សាទុកទិន្នន័យចំណាយ!')
   }
-  showModal.value = false
 }
 
-function deleteExpense(id) {
+// Updated to asynchronously execute deletion from D1
+async function deleteExpense(id) {
   if (confirm('តើអ្នកប្រាកដថាចង់លុបទិន្នន័យចំណាយនេះមែនទេ?')) {
-    expenseStore.deleteExpense(id)
-    activeDropdown.value = null
+    try {
+      await expenseStore.deleteExpense(id)
+      activeDropdown.value = null
+    } catch (error) {
+      alert('មានបញ្ហាក្នុងការលុបទិន្នន័យចំណាយ!')
+    }
   }
 }
 </script>

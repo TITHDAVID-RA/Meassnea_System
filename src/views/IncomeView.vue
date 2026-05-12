@@ -19,6 +19,22 @@ const editingIncome = ref(null)
 // State for mobile dropdown menu
 const activeDropdown = ref(null)
 
+onMounted(async () => {
+  window.addEventListener('click', closeDropdowns)
+  try {
+    // Only fetch if empty
+    if (incomeStore.incomes.length === 0) {
+      await incomeStore.fetchIncomes()
+    }
+  } catch (error) {
+    console.error('Failed to load initial income view data from D1:', error)
+  }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('click', closeDropdowns)
+})
+
 const filteredIncomes = computed(() => {
   let items = incomeStore.incomes.filter(item => {
     const matchesSearch = !search.value || 
@@ -48,9 +64,6 @@ function closeDropdowns(e) {
   }
 }
 
-onMounted(() => window.addEventListener('click', closeDropdowns))
-onUnmounted(() => window.removeEventListener('click', closeDropdowns))
-
 function showAddIncome() {
   editingIncome.value = null
   showModal.value = true
@@ -62,18 +75,29 @@ function editIncome(item) {
   activeDropdown.value = null 
 }
 
-function saveIncome(data) {
-  if (editingIncome.value) {
-    incomeStore.updateIncome(editingIncome.value.id, data)
-  } else {
-    incomeStore.addIncome(data)
+// Updated to asynchronously save updates to D1
+async function saveIncome(data) {
+  try {
+    if (editingIncome.value) {
+      await incomeStore.updateIncome(editingIncome.value.id, data)
+    } else {
+      await incomeStore.addIncome(data)
+    }
+    showModal.value = false
+  } catch (error) {
+    alert('មានបញ្ហាក្នុងការរក្សាទុកទិន្នន័យចំណូល!')
   }
 }
 
-function deleteIncome(id) {
+// Updated to asynchronously execute deletion from D1
+async function deleteIncome(id) {
   if (confirm('តើអ្នកប្រាកដថាចង់លុបទិន្នន័យចំណូលនេះមែនទេ?')) {
-    incomeStore.deleteIncome(id)
-    activeDropdown.value = null
+    try {
+      await incomeStore.deleteIncome(id)
+      activeDropdown.value = null
+    } catch (error) {
+      alert('មានបញ្ហាក្នុងការលុបទិន្នន័យចំណូល!')
+    }
   }
 }
 </script>

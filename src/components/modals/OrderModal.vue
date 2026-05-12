@@ -2,7 +2,6 @@
 import { ref, computed } from 'vue'
 import { useStockStore } from '@/stores/stockStore'
 import { useOrderStore } from '@/stores/orderStore'
-import { useIncomeStore } from '@/stores/incomeStore'
 import { useInventoryStore } from '@/stores/inventoryStore'
 import { useFormatters } from '@/composables/useFormatters'
 
@@ -11,7 +10,6 @@ const emit = defineEmits(['update:modelValue', 'save'])
 
 const stockStore = useStockStore()
 const orderStore = useOrderStore()
-const incomeStore = useIncomeStore()
 const inventoryStore = useInventoryStore()
 const { formatCurrency } = useFormatters()
 
@@ -69,7 +67,7 @@ function resetForm() {
   items.value = []
 }
 
-function save() {
+async function save() {
   if (items.value.length === 0) return alert('សូមជ្រើសរើសទំនិញយ៉ាងតិចមួយ')
 
   // Validate stock availability before creating order
@@ -81,83 +79,77 @@ function save() {
     }
   }
 
+  // បង្កើត orderData ដោយធានាថា រាល់តម្លៃលេខទាំងអស់ត្រូវបានបំប្លែងទៅជា Number ត្រឹមត្រូវដាច់ខាត
   const orderData = { 
-    ...form.value, 
+    customer: form.value.customer,
+    paymentMethod: form.value.paymentMethod,
+    status: form.value.status,
+    plasticBagQty: Number(form.value.plasticBagQty || 0),
+    caseBoxQty: Number(form.value.caseBoxQty || 0),
+    deliveryCost: Number(form.value.deliveryCost || 0), // ◄─── បំប្លែងទៅជាលេខ
+    date: form.value.date,
     items: items.value.map(item => {
       const product = stockStore.getProductById(item.productId)
       return {
-        ...item,
+        productId: item.productId,
         productName: product?.name || '',
-        total: item.quantity * item.unitPrice
+        quantity: Number(item.quantity || 1),
+        unitPrice: Number(item.unitPrice || 0),
+        costPrice: Number(product?.costPrice || 0), // ◄─── ទាញយកតម្លៃដើមពី Stock ផ្ទាល់មកដាក់ក្នុង Order Item
+        total: Number((item.quantity * item.unitPrice).toFixed(2))
       }
     }), 
-    total: total.value 
+    total: Number(total.value) // ◄─── បំប្លែងតម្លៃលក់សរុបជាលេខ
   }
 
-  // Create Order
-  const order = orderStore.createOrder(orderData)
+  try {
+    // 1. Create Order
+    const order = await orderStore.createOrder(orderData)
 
-  // Deduct stock immediately for ALL orders (both pending and completed)
-  // This prevents overselling. If cancelled, stock is returned.
-  items.value.forEach(item => {
-    const product = stockStore.getProductById(item.productId)
-    if (product) {
-      const previousQty = product.quantity
-      stockStore.adjustStock(item.productId, item.quantity, 'out')
-      inventoryStore.recordMovement({
-        productId: product.id,
-        productName: product.name,
-        type: 'sale',
-        quantity: item.quantity,
-        previousQuantity: previousQty,
-        newQuantity: product.quantity,
-        unitPrice: item.unitPrice,
-        totalValue: item.quantity * item.unitPrice,
-        reference: order.orderNumber,
-        referenceId: order.id,
-        notes: `Reserved for ${order.customer} - ${order.status}`,
+    // 2. Deduct stock immediately for ALL orders
+    for (const item of items.value) {
+      const product = stockStore.getProductById(item.productId)
+      if (product) {
+        const previousQty = product.quantity
+        await stockStore.adjustStock(item.productId, item.quantity, 'out')
+        
+        await inventoryStore.recordMovement({
+          productId: product.id,
+          productName: product.name,
+          type: 'out',
+          quantity: item.quantity,
+          previousQuantity: previousQty,
+          newQuantity: product.quantity,
+          unitPrice: item.unitPrice,
+          totalValue: item.quantity * item.unitPrice,
+          reference: order.orderNumber,
+          referenceId: order.id,
+          notes: `Reserved for ${order.customer} - ${order.status}`,
+        })
+      }
+    }
+
+    // 3. Deduct Plastic Bag
+    if (form.value.plasticBagQty > 0) {
+      await stockStore.deductPlasticBag(Number(form.value.plasticBagQty) || 0, order.orderNumber)
+    }
+
+    // 4. Deduct កេស (Case Box)
+    if (form.value.caseBoxQty > 0) {
+      await stockStore.materialStockOut({
+        materialName: 'កេស',
+        size: 'N/A',
+        quantity: Number(form.value.caseBoxQty) || 0,
+        notes: `បានកាត់ចេញតាមការកម្មង់លេខ: ${order.orderNumber}`
       })
     }
-  })
 
-  // Deduct Plastic Bag
-  if (form.value.plasticBagQty > 0) {
-    stockStore.deductPlasticBag(Number(form.value.plasticBagQty) || 0, order.orderNumber)
+    emit('save')
+    close()
+  } catch (error) {
+    console.error('Failed to process order sequence:', error)
+    alert('មានបញ្ហាក្នុងការបង្កើតការបញ្ជាទិញនេះ!')
   }
-
-  // Deduct កេស (Case Box)
-  if (form.value.caseBoxQty > 0) {
-    stockStore.materialStockOut({
-      materialName: 'កេស',
-      size: 'N/A',
-      quantity: Number(form.value.caseBoxQty) || 0,
-      notes: `បានកាត់ចេញតាមការកម្មង់លេខ: ${order.orderNumber}`
-    })
-  }
-
-  // Calculate income: Σ((unitPrice - costPrice) × quantity) - deliveryCost
-  let totalProfit = 0
-  items.value.forEach(item => {
-    const profitPerUnit = item.unitPrice - (item.costPrice || 0)
-    totalProfit += profitPerUnit * item.quantity
-  })
-  const incomeAmount = Math.max(0, totalProfit - (Number(form.value.deliveryCost) || 0))
-
-  // If status is 'completed', also add income immediately
-  if (form.value.status === 'completed') {
-    incomeStore.addIncome({
-      date: form.value.date,
-      customer: form.value.customer,
-      amount: incomeAmount,
-      category: 'លក់ផលិតផល',
-      description: `${order.orderNumber}`,
-      paymentMethod: form.value.paymentMethod,
-      orderId: order.id
-    })
-  }
-
-  emit('save')
-  close()
 }
 </script>
 

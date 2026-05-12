@@ -16,6 +16,22 @@ const expandedRowId = ref(null)
 // Dropdown State
 const activeDropdown = ref(null)
 
+onMounted(async () => {
+  window.addEventListener('click', closeDropdowns)
+  try {
+    // Only fetch if empty
+    if (assetStore.assets.length === 0) {
+      await assetStore.fetchAssets()
+    }
+  } catch (error) {
+    console.error('Failed to load initial assets view data from D1:', error)
+  }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('click', closeDropdowns)
+})
+
 const filteredAssets = computed(() => {
   return assetStore.assets.filter(item => {
     const searchTerm = search.value.toLowerCase()
@@ -45,9 +61,6 @@ function closeDropdowns(e) {
   }
 }
 
-onMounted(() => window.addEventListener('click', closeDropdowns))
-onUnmounted(() => window.removeEventListener('click', closeDropdowns))
-
 function showAddAsset() {
   editingAsset.value = null
   showAssetModal.value = true
@@ -59,20 +72,30 @@ function openEdit(item) {
   activeDropdown.value = null
 }
 
-function deleteAsset(id) {
+// Converted to async to pause UI until D1 deletes the record
+async function deleteAsset(id) {
   if (confirm('តើអ្នកពិតជាចង់លុបទិន្នន័យនេះមែនទេ?')) {
-    assetStore.deleteAsset(id)
-    activeDropdown.value = null
+    try {
+      await assetStore.deleteAsset(id)
+      activeDropdown.value = null
+    } catch (error) {
+      alert('មានបញ្ហាក្នុងការលុបទិន្នន័យទ្រព្យសកម្ម!')
+    }
   }
 }
 
-function handleSave(data) {
-  if (editingAsset.value && editingAsset.value.id) {
-    assetStore.updateAsset(editingAsset.value.id, data)
-  } else {
-    assetStore.addAsset(data)
+// Converted to async to handle database persistence updates
+async function handleSave(data) {
+  try {
+    if (editingAsset.value && editingAsset.value.id) {
+      await assetStore.updateAsset(editingAsset.value.id, data)
+    } else {
+      await assetStore.addAsset(data)
+    }
+    showAssetModal.value = false
+  } catch (error) {
+    alert('មានបញ្ហាក្នុងការរក្សាទុកទិន្នន័យទ្រព្យសកម្ម!')
   }
-  showAssetModal.value = false
 }
 </script>
 

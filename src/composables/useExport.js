@@ -8,6 +8,7 @@ import { useStockStore } from '@/stores/stockStore'
 
 export function useExcelExport() {
   const isExporting = ref(false)
+  const exportRange = ref('all') // 'all' | '3months' | '6months' | '1year'
 
   function formatDate(dateValue) {
     if (!dateValue) return ''
@@ -21,10 +22,35 @@ export function useExcelExport() {
     return '$' + (Number(amount) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   }
 
-  /**
-   * Intelligently retrieves or estimates material unit/total pricing.
-   * Looks up latest "In" price if it is an "Out" transaction without price data.
-   */
+  function getDateRange() {
+    const now = new Date()
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+    let start = null
+
+    switch (exportRange.value) {
+      case '3months':
+        start = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate(), 0, 0, 0, 0)
+        break
+      case '6months':
+        start = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate(), 0, 0, 0, 0)
+        break
+      case '1year':
+        start = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate(), 0, 0, 0, 0)
+        break
+      default:
+        return { start: null, end: null } // all data
+    }
+    return { start, end }
+  }
+
+  function isWithinRange(dateStr, start, end) {
+    if (!dateStr) return false
+    const itemDate = new Date(dateStr).getTime()
+    if (start && itemDate < start.getTime()) return false
+    if (end && itemDate > end.getTime()) return false
+    return true
+  }
+
   function getMaterialPrices(tx, rawQty) {
     const stockStore = useStockStore()
     const parsePrice = (val) => {
@@ -36,12 +62,10 @@ export function useExcelExport() {
     let unitPrice = parsePrice(tx.unitPrice || tx.unit_price || tx.price || tx.cost || tx.costPrice || tx.cost_price || 0)
     let totalPrice = parsePrice(tx.totalPrice || tx.total_price || tx.total || 0)
 
-    // Calculate unit price if total exists
     if (unitPrice === 0 && totalPrice > 0 && rawQty > 0) {
       unitPrice = totalPrice / rawQty
     }
 
-    // Fallback: If Out transaction has no price, find the latest purchase price (In)
     if (unitPrice === 0 && tx.type === 'out') {
       const latestInTx = stockStore.materialTransactions
         .filter(t => t.type === 'in' && t.materialName === tx.materialName && (tx.size ? t.size === tx.size : true))
@@ -52,7 +76,6 @@ export function useExcelExport() {
       }
     }
 
-    // Calculate total price if missing but we have a unit price
     if (totalPrice === 0 && unitPrice > 0 && rawQty > 0) {
       totalPrice = rawQty * unitPrice
     }
@@ -60,14 +83,10 @@ export function useExcelExport() {
     return { unitPrice, totalPrice }
   }
 
-  /**
-   * Styles the entire worksheet with headers, full table grid borders, and unique column colors.
-   */
   function styleSheet(ws, theme) {
     if (!ws['!ref']) return
     const range = XLSX.utils.decode_range(ws['!ref'])
 
-    // Clean, modern grid borders
     const gridBorder = {
       top: { style: 'thin', color: { rgb: 'CBD5E1' } },
       bottom: { style: 'thin', color: { rgb: 'CBD5E1' } },
@@ -87,7 +106,6 @@ export function useExcelExport() {
         const colBgColor = colColorList[col % colColorList.length] || 'F8FAFC'
 
         if (row === 0) {
-          // --- HEADER STYLE ---
           cell.s = {
             font: { bold: true, color: { rgb: theme.headerText || 'FFFFFF' }, sz: 11, name: 'Khmer OS Battambang' },
             fill: { fgColor: { rgb: theme.headerBg }, patternType: 'solid' },
@@ -100,7 +118,6 @@ export function useExcelExport() {
             }
           }
         } else {
-          // --- DATA ROW STYLE ---
           const isNumeric = cell.t === 'n' || (typeof cell.v === 'string' && cell.v.startsWith('$'))
           cell.s = {
             font: { sz: 10, name: 'Khmer OS Battambang' },
@@ -115,7 +132,6 @@ export function useExcelExport() {
       }
     }
 
-    // Auto-calculate column widths
     const cols = []
     for (let col = range.s.c; col <= range.e.c; col++) {
       let maxWidth = 12
@@ -141,6 +157,7 @@ export function useExcelExport() {
       const orderStore = useOrderStore()
       const stockStore = useStockStore()
 
+      const { start, end } = getDateRange()
       const wb = XLSX.utils.book_new()
       const timestamp = new Date().toISOString().split('T')[0]
 
@@ -152,7 +169,7 @@ export function useExcelExport() {
         'តម្លៃឯកតា': formatCurrency(s.unitPrice),
         'តម្លៃដើម': formatCurrency(s.costPrice),
         'តម្លៃសរុប': formatCurrency(s.quantity * (s.unitPrice || 0)),
-        'តម្លៃដើមសរុប': formatCurrency(s.costPrice * (s.quantity || 0)), // Standardized to use local formatCurrency
+        'តម្លៃដើមសរុប': formatCurrency(s.costPrice * (s.quantity || 0)),
         ស្ថានភាព: s.quantity === 0 ? 'អស់ពីស្តុក' : (s.quantity <= (s.minStockLevel || 0) ? 'ខ្សត់ស្តុក' : 'នៅមានស្តុក'),
         'ថ្ងៃចូលស្តុក': formatDate(s.createdAt),
       }))
@@ -168,7 +185,7 @@ export function useExcelExport() {
 
       // ── SHEET 2: Material In (Light Green Theme) ──
       const materialInData = stockStore.materialTransactions
-        .filter(tx => tx.type === 'in' && tx.materialName !== 'ពលកម្ម')
+        .filter(tx => tx.type === 'in' && tx.materialName !== 'ពលកម្ម' && isWithinRange(tx.date, start, end))
         .map(tx => {
           let qty = tx.quantity
           let rawQty = Number(tx.quantity) || 0
@@ -205,7 +222,7 @@ export function useExcelExport() {
 
       // ── SHEET 3: Material Out (Light Red/Rose Theme) ──
       const materialOutData = stockStore.materialTransactions
-        .filter(tx => tx.type === 'out' && tx.materialName !== 'ពលកម្ម')
+        .filter(tx => tx.type === 'out' && tx.materialName !== 'ពលកម្ម' && isWithinRange(tx.date, start, end))
         .map(tx => {
           let qty = tx.quantity
           let rawQty = Number(tx.quantity) || 0
@@ -253,18 +270,20 @@ export function useExcelExport() {
       XLSX.utils.book_append_sheet(wb, wsMaterialOut, 'សម្ភារៈចេញ')
 
       // ── SHEET 4: Orders (Light Purple Theme) ──
-      const orderData = orderStore.orders.map(o => {
-        const itemsSummary = o.items ? o.items.map(item => `${item.name || item.productName || 'ផលិតផល'} x${item.quantity}`).join(', ') : ''
-        return {
-          លេខការកម្មង់: o.orderNumber,
-          អតិថិជន: o.customer?.name || o.customerName || o.customer || '',
-          ស្ថានភាព: o.status,
-          តម្លៃសរុប: formatCurrency(o.total),
-          ទំនិញ: itemsSummary,
-          កាលបរិច្ឆេទចេញវិក្កយបត្រ: formatDate(o.createdAt),
-          កត់ត្រា: o.notes || ''
-        }
-      })
+      const orderData = orderStore.orders
+        .filter(o => isWithinRange(o.date || o.createdAt, start, end))
+        .map(o => {
+          const itemsSummary = o.items ? o.items.map(item => `${item.name || item.productName || 'ផលិតផល'} x${item.quantity}`).join(', ') : ''
+          return {
+            លេខការកម្មង់: o.orderNumber,
+            អតិថិជន: o.customer?.name || o.customerName || o.customer || '',
+            ស្ថានភាព: o.status,
+            តម្លៃសរុប: formatCurrency(o.total),
+            ទំនិញ: itemsSummary,
+            កាលបរិច្ឆេទចេញវិក្កយបត្រ: formatDate(o.createdAt),
+            កត់ត្រា: o.notes || ''
+          }
+        })
       if (orderData.length > 0) {
         const wsOrders = XLSX.utils.json_to_sheet(orderData)
         styleSheet(wsOrders, {
@@ -276,16 +295,18 @@ export function useExcelExport() {
       }
 
       // ── SHEET 5: Assets (Light Orange Theme) ──
-      const assetData = assetStore.assets.map(a => ({
-        ឈ្មោះទ្រព្យសម្បត្តិ: a.name,
-        ប្រភេទ: a.category || assetStore.assetCategories.find(c => c.id === a.categoryId || c.name === a.category)?.name || a.categoryId || a.category || '',
-        ទីតាំង: a.location || '',
-        អ្នកកាន់កាប់: a.assignedTo || '',
-        កាលបរិច្ឆេទទិញ: formatDate(a.purchaseDate || a.date),
-        តម្លៃទិញចូល: formatCurrency(a.value),
-        អ្នកផ្គត់ផ្គង់: a.vendor || '',
-        ការពិពណ៌នា: a.description || ''
-      }))
+      const assetData = assetStore.assets
+        .filter(a => isWithinRange(a.purchaseDate || a.date, start, end))
+        .map(a => ({
+          ឈ្មោះទ្រព្យសម្បត្តិ: a.name,
+          ប្រភេទ: a.category || assetStore.assetCategories.find(c => c.id === a.categoryId || c.name === a.category)?.name || a.categoryId || a.category || '',
+          ទីតាំង: a.location || '',
+          អ្នកកាន់កាប់: a.assignedTo || '',
+          កាលបរិច្ឆេទទិញ: formatDate(a.purchaseDate || a.date),
+          តម្លៃទិញចូល: formatCurrency(a.value),
+          អ្នកផ្គត់ផ្គង់: a.vendor || '',
+          ការពិពណ៌នា: a.description || ''
+        }))
       if (assetData.length > 0) {
         const wsAssets = XLSX.utils.json_to_sheet(assetData)
         styleSheet(wsAssets, {
@@ -297,15 +318,17 @@ export function useExcelExport() {
       }
 
       // ── SHEET 6: Income (Light Teal Theme) ──
-      const incomeData = incomeStore.incomes.map(i => ({
-        ថ្ងៃខែ: formatDate(i.date),
-        ទឹកប្រាក់ចំណេញសុទ្ធ: formatCurrency(i.amount),
-        ប្រភេទចំណូល: i.category || incomeStore.incomeCategories.find(c => c.id === i.categoryId || c.name === i.category)?.name || i.categoryId || i.category || '',
-        វិធីបង់ប្រាក់: i.paymentMethod === 'cash' ? 'សាច់ប្រាក់' : (i.paymentMethod === 'bank_transfer' ? 'ផ្ទេរប្រាក់តាមធនាគារ' : i.paymentMethod || ''),
-        កំណត់សម្គាល់: i.description || i.name || '',
-        ឈ្មោះអតិថិជន: i.customer || '',
-        ឯកសារយោង: i.reference || ''
-      }))
+      const incomeData = incomeStore.incomes
+        .filter(i => isWithinRange(i.date, start, end))
+        .map(i => ({
+          ថ្ងៃខែ: formatDate(i.date),
+          ទឹកប្រាក់ចំណេញសុទ្ធ: formatCurrency(i.amount),
+          ប្រភេទចំណូល: i.category || incomeStore.incomeCategories.find(c => c.id === i.categoryId || c.name === i.category)?.name || i.categoryId || i.category || '',
+          វិធីបង់ប្រាក់: i.paymentMethod === 'cash' ? 'សាច់ប្រាក់' : (i.paymentMethod === 'bank_transfer' ? 'ផ្ទេរប្រាក់តាមធនាគារ' : i.paymentMethod || ''),
+          កំណត់សម្គាល់: i.description || i.name || '',
+          ឈ្មោះអតិថិជន: i.customer || '',
+          ឯកសារយោង: i.reference || ''
+        }))
       if (incomeData.length > 0) {
         const wsIncome = XLSX.utils.json_to_sheet(incomeData)
         styleSheet(wsIncome, {
@@ -317,15 +340,17 @@ export function useExcelExport() {
       }
 
       // ── SHEET 7: Expenses (Light Pink Theme) ──
-      const expenseData = expenseStore.expenses.map(e => ({
-        កាលបរិច្ឆេទ: formatDate(e.date),
-        ចំនួនទឹកប្រាក់: formatCurrency(e.amount),
-        ប្រភេទចំណាយ: e.category || expenseStore.expenseCategories.find(c => c.id === e.categoryId || c.name === e.category)?.name || e.categoryId || e.category || '',
-        វិធីសាស្ត្រទូទាត់: e.paymentMethod === 'cash' ? 'សាច់ប្រាក់' : (e.paymentMethod === 'khqr' ? 'ផ្ទេរប្រាក់តាមធនាគារ' : e.paymentMethod || ''),
-        បរិយាយ: e.description || e.name || '',
-        អ្នកផ្គត់ផ្គង់: e.vendor || '',
-        លេខយោង: e.reference || ''
-      }))
+      const expenseData = expenseStore.expenses
+        .filter(e => isWithinRange(e.date, start, end))
+        .map(e => ({
+          កាលបរិច្ឆេទ: formatDate(e.date),
+          ចំនួនទឹកប្រាក់: formatCurrency(e.amount),
+          ប្រភេទចំណាយ: e.category || expenseStore.expenseCategories.find(c => c.id === e.categoryId || c.name === e.category)?.name || e.categoryId || e.category || '',
+          វិធីសាស្ត្រទូទាត់: e.paymentMethod === 'cash' ? 'សាច់ប្រាក់' : (e.paymentMethod === 'khqr' ? 'ផ្ទេរប្រាក់តាមធនាគារ' : e.paymentMethod || ''),
+          បរិយាយ: e.description || e.name || '',
+          អ្នកផ្គត់ផ្គង់: e.vendor || '',
+          លេខយោង: e.reference || ''
+        }))
       if (expenseData.length > 0) {
         const wsExpenses = XLSX.utils.json_to_sheet(expenseData)
         styleSheet(wsExpenses, {
@@ -336,7 +361,10 @@ export function useExcelExport() {
         XLSX.utils.book_append_sheet(wb, wsExpenses, 'ចំណាយ')
       }
 
-      const filename = `របាយការណ៍_${timestamp}.xlsx`
+      const rangeLabel = exportRange.value === 'all' ? 'ទាំងអស់' : 
+                        exportRange.value === '3months' ? '3ខែចុងក្រោយ' :
+                        exportRange.value === '6months' ? '6ខែចុងក្រោយ' : '1ឆ្នាំចុងក្រោយ'
+      const filename = `របាយការណ៍_${rangeLabel}_${timestamp}.xlsx`
       XLSX.writeFile(wb, filename)
     } catch (error) {
       console.error('Excel export failed:', error)
@@ -347,6 +375,7 @@ export function useExcelExport() {
 
   return {
     isExporting,
+    exportRange,
     exportAllToExcel
   }
 }

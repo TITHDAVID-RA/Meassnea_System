@@ -15,7 +15,8 @@ const loading = ref(false)
 const VALID_EMAIL = 'meassnea@gmail.com'
 const VALID_PASSWORD = 'meassnea123'
 
-function login() {
+// Converted to an async function to keep code architecture clean and consistent
+async function login() {
   error.value = ''
 
   if (!email.value || !password.value) {
@@ -25,17 +26,18 @@ function login() {
 
   loading.value = true
 
-  // Simulate network delay
-  setTimeout(() => {
-    if (email.value === VALID_EMAIL && password.value === VALID_PASSWORD) {
-      // Store auth token
-      setAuth('logged_in')
-      router.push('/')
-    } else {
-      error.value = 'អ៊ីមែលឬពាក្យសម្ងាត់មិនត្រឹមត្រូវ'
-    }
-    loading.value = false
-  }, 500)
+  // Simulate network delay using an awaitable Promise
+  await new Promise((resolve) => setTimeout(resolve, 500))
+
+  if (email.value === VALID_EMAIL && password.value === VALID_PASSWORD) {
+    // Store auth token
+    setAuth('logged_in')
+    router.push('/')
+  } else {
+    error.value = 'អ៊ីមែលឬពាក្យសម្ងាត់មិនត្រឹមត្រូវ'
+  }
+  
+  loading.value = false
 }
 </script>
 

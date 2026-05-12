@@ -43,8 +43,24 @@ function clearAllFilters() {
   endDate.value = ''
 }
 
-onMounted(() => window.addEventListener('click', closeDropdowns))
-onUnmounted(() => window.removeEventListener('click', closeDropdowns))
+onMounted(async () => {
+  window.addEventListener('click', closeDropdowns)
+  try {
+    const promises = []
+    if (stockStore.stockItems.length === 0) promises.push(stockStore.fetchStockData())
+    if (expenseStore.expenses.length === 0) promises.push(expenseStore.fetchExpenses())
+    
+    if (promises.length > 0) {
+      await Promise.all(promises)
+    }
+  } catch (error) {
+    console.error('Failed to load initial stock view data from D1:', error)
+  }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('click', closeDropdowns)
+})
 
 function showAddStock() {
   editingBatch.value = null
@@ -250,43 +266,59 @@ function openEditStock(item) {
   activeDropdown.value = null
 }
 
-function deleteBatch(id) {
+// Converted to async to wait for local D1 deletion
+async function deleteBatch(id) {
   if (confirm('តើអ្នកពិតជាចង់លុបបាច់ស្តុកនេះមែនទេ?')) {
-    stockStore.deleteProduct(id)
+    try {
+      await stockStore.deleteProduct(id)
+    } catch (error) {
+      alert('មានបញ្ហាក្នុងការលុបផលិតផល!')
+    }
   }
 }
 
-function handleProcessStock(data) {
-  if (editingBatch.value) {
-    stockStore.updateProduct(editingBatch.value.id, { ...data })
-  } else {
-    stockStore.addProduct({ ...data, initialQuantity: data.quantity })
+// Converted to async to wait for local D1 processing
+async function handleProcessStock(data) {
+  try {
+    if (editingBatch.value) {
+      await stockStore.updateProduct(editingBatch.value.id, { ...data })
+    } else {
+      await stockStore.addProduct({ ...data, initialQuantity: data.quantity })
+    }
+  } catch (error) {
+    alert('មានបញ្ហាក្នុងការរក្សាទុកផលិតផល!')
   }
 }
 
-function handleMaterialSave(data) {
-  // Save each entry as individual transaction
-  data.entries.forEach((entry) => {
-    stockStore.materialStockIn({
-      ...entry,
-      date: data.date,
-    })
-  })
+// Converted to async to wait for local D1 database entries
+async function handleMaterialSave(data) {
+  try {
+    // Save each entry as individual transaction
+    for (const entry of data.entries) {
+      await stockStore.materialStockIn({
+        ...entry,
+        date: data.date,
+      })
+    }
 
-  // Auto-create expense for ទាបបារាំង purchases
-  const teaPowderEntries = data.entries.filter((e) => e.materialName === 'ទាបបារាំង')
-  if (teaPowderEntries.length > 0) {
-    const totalCost = teaPowderEntries.reduce((sum, e) => sum + e.totalPrice, 0)
-    const totalKg = teaPowderEntries.reduce((sum, e) => sum + e.quantity, 0)
-    expenseStore.addExpense({
-      date: data.date,
-      amount: totalCost,
-      category: 'វត្ថុធាតុដើម',
-      description: `ទិញទាបបារាំងចូលស្តុក ${totalKg.toFixed(2)}kg`,
-      paymentMethod: 'cash',
-      vendor: '',
-      reference: '',
-    })
+    // Auto-create expense for ទាបបារាំង purchases
+    const teaPowderEntries = data.entries.filter((e) => e.materialName === 'ទាបបារាំង')
+    if (teaPowderEntries.length > 0) {
+      const totalCost = teaPowderEntries.reduce((sum, e) => sum + e.totalPrice, 0)
+      const totalKg = teaPowderEntries.reduce((sum, e) => sum + e.quantity, 0)
+      
+      await expenseStore.addExpense({
+        date: data.date,
+        amount: totalCost,
+        category: 'វត្ថុធាតុដើម',
+        description: `ទិញទាបបារាំងចូលស្តុក ${totalKg.toFixed(2)}kg`,
+        paymentMethod: 'cash',
+        vendor: '',
+        reference: '',
+      })
+    }
+  } catch (error) {
+    alert('មានបញ្ហាក្នុងការកត់ត្រាប្រតិបត្តិការសម្ភារៈ!')
   }
 }
 </script>

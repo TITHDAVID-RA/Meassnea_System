@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { useStorage } from '@/composables/useStorage'
 import { useGenerators } from '@/composables/useGenerators'
+import { api } from '@/api/client' // Import central D1 API client
 
 const defaultStockCategories = []
 
@@ -55,17 +55,18 @@ function getSizeFromProductName(name) {
 export const useStockStore = defineStore('stock', () => {
   const { generateId } = useGenerators()
 
-  const stockItems = useStorage('stockItems', [])
-  const stockCategories = useStorage('stockCategories', defaultStockCategories)
-  const materialTransactions = useStorage('materialTransactions', [])
+  // Replace browser useStorage offline states with reactive ref states
+  const stockItems = ref([])
+  const stockCategories = ref(defaultStockCategories)
+  const materialTransactions = ref([])
   
-  // User-input តែ price per gram (stored in localStorage)
-  const teaPricePerGram = useStorage('teaPricePerGram', 0)
+  // teaPricePerGram continues to write locally to save persistent settings
+  const teaPricePerGram = ref(Number(localStorage.getItem('teaPricePerGram')) || 0)
 
   // --- Computed States ---
   const totalProducts = computed(() => stockItems.value.length)
   const totalQuantity = computed(() => stockItems.value.reduce((sum, item) => sum + item.quantity, 0))
-  const totalValue = computed(() => stockItems.value.reduce((sum, item) => sum + (item.quantity * (item.unitPrice || 0)), 0))
+  const totalValue = computed(() => stockItems.value.reduce((sum, item) => sum + (item.quantity * (item.unitPrice || item.unit_price || 0)), 0))
   const lowStockCount = computed(() => stockItems.value.filter(item => item.quantity <= item.minStockLevel).length)
   const outOfStockCount = computed(() => stockItems.value.filter(item => item.quantity === 0).length)
 
@@ -106,18 +107,61 @@ export const useStockStore = defineStore('stock', () => {
   const lowMaterialCount = computed(() => materialSummary.value.filter(m => m.balance <= 50).length)
   const totalMaterialQuantity = computed(() => materialSummary.value.reduce((sum, m) => sum + m.balance, 0))
 
+  /**
+   * Loads product information and material ledger logs directly from Cloudflare D1
+   */
+  async function fetchStockData() {
+    try {
+      const [products, transactions] = await Promise.all([
+        api.get('/products'),
+        api.get('/material-transactions')
+      ])
+
+      // Map snake_case columns back to your local camelCase states
+      stockItems.value = products.map(p => ({
+        id: p.id,
+        name: p.name,
+        category: p.category,
+        size: p.size,
+        quantity: p.quantity,
+        initialQuantity: p.initial_quantity,
+        unitPrice: p.unit_price,
+        costPrice: p.cost_price,
+        minStockLevel: p.min_stock_level,
+        createdAt: p.created_at ? new Date(p.created_at) : new Date(),
+        updatedAt: p.updated_at ? new Date(p.updated_at) : new Date()
+      }))
+
+      materialTransactions.value = transactions.map(tx => ({
+        id: tx.id,
+        materialId: tx.material_id,
+        materialName: tx.material_name,
+        size: tx.size,
+        quantity: tx.quantity,
+        unitPrice: tx.unit_price,
+        totalPrice: tx.total_price,
+        type: tx.type,
+        date: tx.transaction_date ? new Date(tx.transaction_date) : new Date(tx.created_at),
+        notes: tx.notes || '',
+        createdAt: tx.created_at ? new Date(tx.created_at) : new Date()
+      }))
+    } catch (error) {
+      console.error('Failed to load stock data from Cloudflare D1:', error)
+      throw error
+    }
+  }
+
   // --- Material Cost Calculation ---
-  // Get តែ price per gram (USER INPUT stored as per-gram, input was per-100g)
   function getTeaPricePerGram() {
-    return (Number(teaPricePerGram.value) || 0) * 100 ;
+    return (Number(teaPricePerGram.value) || 0) * 100;
   }
 
-  // Set/update តែ price per 100g (user input), stored as per gram internally
   function setTeaPricePerGram(pricePer100g) {
-    teaPricePerGram.value = (Number(pricePer100g) || 0) / 100;
+    const rate = (Number(pricePer100g) || 0) / 100;
+    teaPricePerGram.value = rate;
+    localStorage.setItem('teaPricePerGram', rate.toString());
   }
 
-  // Get the average cost per unit for a specific material + size
   function getMaterialUnitCost(materialName, size = 'N/A') {
     const txs = materialTransactions.value
       .filter(tx => tx.materialName === materialName && tx.size === size && tx.type === 'in')
@@ -127,105 +171,147 @@ export const useStockStore = defineStore('stock', () => {
     return totalQty > 0 ? totalCost / totalQty : 0
   }
 
-  // Calculate total material cost per product unit (for a given size)
-  // Package bag + Box + Card + Tea (per size) + Labor (per size)
   function getMaterialCostPerUnit(size) {
     if (!size || !['S', 'M', 'L'].includes(size)) return 0
 
     let totalCost = 0
 
-    // Sized materials: Package bag, Box, Card
     SIZED_MATERIALS.forEach(matName => {
       totalCost += getMaterialUnitCost(matName, size)
     })
 
-    // Tea cost: grams needed × user-input price per gram
     const teaGrams = TEA_GRAMS_PER_SIZE[size] || 0
     const teaPrice = getTeaPricePerGram()
     if (teaGrams > 0 && teaPrice > 0) {
       totalCost += (teaGrams / 100) * teaPrice
     }
 
-    // Labor - stored price only, unlimited use
     totalCost += getMaterialUnitCost('ពលកម្ម', size)
 
     return totalCost
   }
 
   // --- Product Functions ---
- function addProduct(productData) {
-  // 1. Move this to the top! Now 'size' is initialized and ready to use.
-  const size = getSizeFromProductName(productData.name)
-  const qty = Number(productData.quantity) || 1
-  
-  let calculatedCostPrice = productData.costPrice || 0
+  async function addProduct(productData) {
+    try {
+      const size = getSizeFromProductName(productData.name)
+      const qty = Number(productData.quantity) || 1
+      
+      let calculatedCostPrice = productData.costPrice || 0
 
-  // 2. Now this 'if' statement will work because 'size' is defined
-  if (size && ['S', 'M', 'L'].includes(size) && (!calculatedCostPrice || calculatedCostPrice <= 0)) {
-    calculatedCostPrice = getMaterialCostPerUnit(size)
-  }
+      if (size && ['S', 'M', 'L'].includes(size) && (!calculatedCostPrice || calculatedCostPrice <= 0)) {
+        calculatedCostPrice = getMaterialCostPerUnit(size)
+      }
 
-  const newProduct = {
-    id: generateId(),
-    ...productData,
-    costPrice: calculatedCostPrice,
-    createdAt: new Date(),
-    updatedAt: new Date()
-  }
-  stockItems.value.push(newProduct)
+      const newId = generateId()
+      const now = new Date()
 
-  // Deduct materials based on product type
-  if (productData.name === 'ទាបបារាំង') {
-    // ទាបបារាំង standalone product: deduct ទាបបារាំង material in kg
-    materialStockOut({
-      materialName: 'ទាបបារាំង',
-      size: 'N/A',
-      quantity: qty,
-      notes: `ផលិតផលបញ្ចូលស្តុក - ${productData.name} x${qty}`
-    })
-  } else if (size && qty > 0) {
-    // តែទាបបារាំង (S/M/L): deduct packaging materials 1:1
-    SIZED_MATERIALS.forEach(matName => {
-      materialStockOut({
-        materialName: matName,
+      // SQLite mapping payload
+      const payload = {
+        id: newId,
+        name: productData.name,
+        category: productData.category || '',
+        size: size || 'N/A',
+        quantity: qty,
+        initial_quantity: Number(productData.initialQuantity || qty),
+        unit_price: Number(productData.unitPrice || 0),
+        cost_price: Number(calculatedCostPrice),
+        min_stock_level: Number(productData.minStockLevel || 0)
+      }
+
+      await api.post('/products', payload)
+
+      const newProduct = {
+        id: newId,
+        name: productData.name,
+        category: productData.category,
         size: size,
         quantity: qty,
-        notes: `ផលិតផលបញ្ចូលស្តុក - ${productData.name} x${qty}`
-      })
-    })
+        initialQuantity: productData.initialQuantity || qty,
+        unitPrice: productData.unitPrice || 0,
+        costPrice: calculatedCostPrice,
+        minStockLevel: productData.minStockLevel || 0,
+        createdAt: now,
+        updatedAt: now
+      }
+      stockItems.value.push(newProduct)
 
-    // Deduct តែ (tea) - tracked as out transaction for display
-    const teaGrams = (TEA_GRAMS_PER_SIZE[size] || 0) * qty
-    if (teaGrams > 0) {
-      materialStockOut({
-        materialName: 'តែ',
-        size: size,
-        quantity: teaGrams,
-        notes: `ផលិតផលបញ្ចូលស្តុក - ${productData.name} x${qty} (${teaGrams}g តែ)`
-      })
+      // Deduct matching materials recursively inside backend logs
+      if (productData.name === 'ទាបបារាំង') {
+        await materialStockOut({
+          materialName: 'ទាបបារាំង',
+          size: 'N/A',
+          quantity: qty,
+          notes: `ផលិតផលបញ្ចូលស្តុក - ${productData.name} x${qty}`
+        })
+      } else if (size && qty > 0) {
+        for (const matName of SIZED_MATERIALS) {
+          await materialStockOut({
+            materialName: matName,
+            size: size,
+            quantity: qty,
+            notes: `ផលិតផលបញ្ចូលស្តុក - ${productData.name} x${qty}`
+          })
+        }
+
+        const teaGrams = (TEA_GRAMS_PER_SIZE[size] || 0) * qty
+        if (teaGrams > 0) {
+          await materialStockOut({
+            materialName: 'តែ',
+            size: size,
+            quantity: teaGrams,
+            notes: `ផលិតផលបញ្ចូលស្តុក - ${productData.name} x${qty} (${teaGrams}g តែ)`
+          })
+        }
+      }
+      return newProduct
+    } catch (error) {
+      console.error('Failed to create product in D1:', error)
+      throw error
     }
   }
-  return newProduct
-}
 
-  function updateProduct(id, updates) {
-    const index = stockItems.value.findIndex(item => item.id === id)
-    if (index !== -1) {
-      stockItems.value[index] = { ...stockItems.value[index], ...updates, updatedAt: new Date() }
-      return stockItems.value[index]
+  async function updateProduct(id, updates) {
+    try {
+      const payload = {
+        name: updates.name,
+        category: updates.category,
+        size: updates.size || getSizeFromProductName(updates.name) || 'N/A',
+        quantity: Number(updates.quantity),
+        unit_price: Number(updates.unitPrice),
+        cost_price: Number(updates.costPrice),
+        min_stock_level: Number(updates.minStockLevel)
+      }
+
+      await api.put(`/products/${id}`, payload)
+
+      const index = stockItems.value.findIndex(item => item.id === id)
+      if (index !== -1) {
+        stockItems.value[index] = { ...stockItems.value[index], ...updates, updatedAt: new Date() }
+        return stockItems.value[index]
+      }
+      return null
+    } catch (error) {
+      console.error(`Failed to update product ${id} in D1:`, error)
+      throw error
     }
-    return null
   }
 
-  function deleteProduct(id) {
-    stockItems.value = stockItems.value.filter(item => item.id !== id)
+  async function deleteProduct(id) {
+    try {
+      await api.delete(`/products/${id}`)
+      stockItems.value = stockItems.value.filter(item => item.id !== id)
+    } catch (error) {
+      console.error(`Failed to delete product ${id} from D1:`, error)
+      throw error
+    }
   }
 
   function getProductById(id) {
     return stockItems.value.find(item => item.id === id)
   }
 
-  function adjustStock(id, quantity, type = 'out', notes = '') {
+  async function adjustStock(id, quantity, type = 'out', notes = '') {
     const product = getProductById(id)
     if (!product) return null
 
@@ -235,62 +321,107 @@ export const useStockStore = defineStore('stock', () => {
     if (type === 'out' && product.quantity < qty) return null
 
     const previousQty = product.quantity
-    if (type === 'in') {
-      product.quantity = Number(product.quantity) + qty
-    } else {
-      product.quantity = Number(product.quantity) - qty
+    const newQty = type === 'in' ? Number(product.quantity) + qty : Number(product.quantity) - qty
+
+    try {
+      await updateProduct(id, { ...product, quantity: newQty })
+      return { product, previousQty }
+    } catch (error) {
+      console.error(`Failed to adjust stock for product ${id}:`, error)
+      throw error
     }
-    product.updatedAt = new Date()
-    return { product, previousQty }
   }
 
   // --- Material Functions ---
-  function materialStockIn(data) {
-    // Determine size based on material type
+  async function materialStockIn(data) {
     let size = data.size
     if (data.materialName === 'ទាបបារាំង' || data.materialName === 'ថង់' || data.materialName === 'កេស') {
       size = 'N/A'
     }
 
-    const transaction = {
-      id: generateId(),
-      materialName: data.materialName,
-      size: size,
+    const newId = generateId()
+    const now = data.date ? new Date(data.date) : new Date()
+
+    const payload = {
+      id: newId,
+      material_id: data.materialId || null,
+      material_name: data.materialName,
+      size: size || 'N/A',
       quantity: Number(data.quantity),
-      unitPrice: Number(data.unitPrice || 0),
-      totalPrice: Number(data.unitPrice || 0) * Number(data.quantity),
+      unit_price: Number(data.unitPrice || 0),
+      total_price: Number(data.unitPrice || 0) * Number(data.quantity),
       type: 'in',
-      date: data.date || new Date(),
-      notes: data.notes || '',
-      createdAt: new Date()
+      notes: data.notes || ''
     }
-    materialTransactions.value.push(transaction)
-    return transaction
+
+    try {
+      await api.post('/material-transactions', payload)
+
+      const transaction = {
+        id: newId,
+        materialName: data.materialName,
+        size: size,
+        quantity: Number(data.quantity),
+        unitPrice: Number(data.unitPrice || 0),
+        totalPrice: Number(data.unitPrice || 0) * Number(data.quantity),
+        type: 'in',
+        date: now,
+        notes: data.notes || '',
+        createdAt: new Date()
+      }
+      materialTransactions.value.push(transaction)
+      return transaction
+    } catch (error) {
+      console.error('Failed material stock-in inside D1:', error)
+      throw error
+    }
   }
 
-  function materialStockOut(data) {
+  async function materialStockOut(data) {
     let size = data.size
     if (data.materialName === 'ទាបបារាំង' || data.materialName === 'ថង់' || data.materialName === 'កេស') {
       size = 'N/A'
     }
 
-    const transaction = {
-      id: generateId(),
-      materialName: data.materialName,
-      size: size,
+    const newId = generateId()
+    const now = data.date ? new Date(data.date) : new Date()
+
+    const payload = {
+      id: newId,
+      material_id: data.materialId || null,
+      material_name: data.materialName,
+      size: size || 'N/A',
       quantity: Number(data.quantity),
-      unitPrice: 0,
-      totalPrice: 0,
+      unit_price: 0,
+      total_price: 0,
       type: 'out',
-      date: data.date || new Date(),
-      notes: data.notes || '',
-      createdAt: new Date()
+      notes: data.notes || ''
     }
-    materialTransactions.value.push(transaction)
-    return transaction
+
+    try {
+      await api.post('/material-transactions', payload)
+
+      const transaction = {
+        id: newId,
+        materialName: data.materialName,
+        size: size,
+        quantity: Number(data.quantity),
+        unitPrice: 0,
+        totalPrice: 0,
+        type: 'out',
+        date: now,
+        notes: data.notes || '',
+        createdAt: new Date()
+      }
+      materialTransactions.value.push(transaction)
+      return transaction
+    } catch (error) {
+      console.error('Failed material stock-out inside D1:', error)
+      throw error
+    }
   }
 
-  function deductPlasticBag(quantity = 1, orderNumber = '') {
+  async function deductPlasticBag(quantity = 1, orderNumber = '') {
     return materialStockOut({
       materialName: 'ថង់',
       size: 'N/A',
@@ -299,7 +430,7 @@ export const useStockStore = defineStore('stock', () => {
     })
   }
 
-  function deductCaseBox(quantity = 1, orderNumber = '') {
+  async function deductCaseBox(quantity = 1, orderNumber = '') {
     return materialStockOut({
       materialName: 'កេស',
       size: 'N/A',
@@ -308,7 +439,7 @@ export const useStockStore = defineStore('stock', () => {
     })
   }
 
-  function returnPlasticBag(quantity = 1, orderNumber = '') {
+  async function returnPlasticBag(quantity = 1, orderNumber = '') {
     const txIndex = materialTransactions.value.findIndex(tx =>
       tx.materialName === 'ថង់' &&
       tx.type === 'out' &&
@@ -316,15 +447,28 @@ export const useStockStore = defineStore('stock', () => {
     )
 
     if (txIndex !== -1) {
-      materialTransactions.value[txIndex] = {
-        ...materialTransactions.value[txIndex],
-        quantity: 0,
-        notes: orderNumber ?
-          `បានបន្ថែមវិញពីការបោះបង់ការកម្មង់លេខ: ${orderNumber} (ត្រឡប់វិញ)` :
-          'បានបន្ថែមវិញពីការបោះបង់ការកម្មង់ (ត្រឡប់វិញ)',
-        updatedAt: new Date()
+      const targetTx = materialTransactions.value[txIndex]
+      const updatedNotes = orderNumber ?
+        `បានបន្ថែមវិញពីការបោះបង់ការកម្មង់លេខ: ${orderNumber} (ត្រឡប់វិញ)` :
+        'បានបន្ថែមវិញពីការបោះបង់ការកម្មង់ (ត្រឡប់វិញ)'
+
+      try {
+        // Zero out the historical deduction
+        await api.put(`/material-transactions/${targetTx.id}`, {
+          quantity: 0,
+          notes: updatedNotes
+        })
+
+        materialTransactions.value[txIndex] = {
+          ...targetTx,
+          quantity: 0,
+          notes: updatedNotes,
+          updatedAt: new Date()
+        }
+        return materialTransactions.value[txIndex]
+      } catch (error) {
+        console.error('Failed to update plastic bag returns inside D1:', error)
       }
-      return materialTransactions.value[txIndex]
     }
 
     return materialStockIn({
@@ -338,7 +482,7 @@ export const useStockStore = defineStore('stock', () => {
     })
   }
 
-  function returnCaseBox(quantity = 1, orderNumber = '') {
+  async function returnCaseBox(quantity = 1, orderNumber = '') {
     const txIndex = materialTransactions.value.findIndex(tx =>
       tx.materialName === 'កេស' &&
       tx.type === 'out' &&
@@ -346,15 +490,27 @@ export const useStockStore = defineStore('stock', () => {
     )
 
     if (txIndex !== -1) {
-      materialTransactions.value[txIndex] = {
-        ...materialTransactions.value[txIndex],
-        quantity: 0,
-        notes: orderNumber ?
-          `បានបន្ថែមវិញពីការបោះបង់ការកម្មង់លេខ: ${orderNumber} (ត្រឡប់វិញ)` :
-          'បានបន្ថែមវិញពីការបោះបង់ការកម្មង់ (ត្រឡប់វិញ)',
-        updatedAt: new Date()
+      const targetTx = materialTransactions.value[txIndex]
+      const updatedNotes = orderNumber ?
+        `បានបន្ថែមវិញពីការបោះបង់ការកម្មង់លេខ: ${orderNumber} (ត្រឡប់វិញ)` :
+        'បានបន្ថែមវិញពីការបោះបង់ការកម្មង់ (ត្រឡប់វិញ)'
+
+      try {
+        await api.put(`/material-transactions/${targetTx.id}`, {
+          quantity: 0,
+          notes: updatedNotes
+        })
+
+        materialTransactions.value[txIndex] = {
+          ...targetTx,
+          quantity: 0,
+          notes: updatedNotes,
+          updatedAt: new Date()
+        }
+        return materialTransactions.value[txIndex]
+      } catch (error) {
+        console.error('Failed to update case box returns inside D1:', error)
       }
-      return materialTransactions.value[txIndex]
     }
 
     return materialStockIn({
@@ -368,20 +524,25 @@ export const useStockStore = defineStore('stock', () => {
     })
   }
 
-
-  function deductMaterialsBySize(size, amount = 1) {
-    SIZED_MATERIALS.forEach(matName => {
-      materialStockOut({
+  async function deductMaterialsBySize(size, amount = 1) {
+    for (const matName of SIZED_MATERIALS) {
+      await materialStockOut({
         materialName: matName,
         size,
         quantity: amount,
         notes: `Auto deduct for product production (size ${size})`
       })
-    })
+    }
   }
 
-  function deleteMaterialTransaction(id) {
-    materialTransactions.value = materialTransactions.value.filter(tx => tx.id !== id)
+  async function deleteMaterialTransaction(id) {
+    try {
+      await api.delete(`/material-transactions/${id}`)
+      materialTransactions.value = materialTransactions.value.filter(tx => tx.id !== id)
+    } catch (error) {
+      console.error(`Failed to delete transaction ${id} from D1:`, error)
+      throw error
+    }
   }
 
   function getMaterialTransactions(materialName, size) {
@@ -404,6 +565,7 @@ export const useStockStore = defineStore('stock', () => {
     materialSummary,
     lowMaterialCount,
     totalMaterialQuantity,
+    fetchStockData, // Expose fetchStockData to sync metrics
     addProduct,
     updateProduct,
     deleteProduct,

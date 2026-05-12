@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { useStorage } from '@/composables/useStorage'
 import { useGenerators } from '@/composables/useGenerators'
+import { api } from '@/api/client' // Import your central D1 API client
 
 const defaultExpenseCategories = [
   { id: '1', name: 'សភិរះប្រើប្រាស់' },
@@ -17,9 +17,12 @@ const defaultExpenseCategories = [
 
 export const useExpenseStore = defineStore('expense', () => {
   const { generateId } = useGenerators()
-  const expenses = useStorage('expenses', [])
-  const expenseCategories = useStorage('expenseCategories', defaultExpenseCategories)
 
+  // Replace useStorage offline states with reactive ref states
+  const expenses = ref([])
+  const expenseCategories = ref(defaultExpenseCategories)
+
+  // Computed properties recalculate instantly when D1 data updates
   const monthlyTotal = computed(() => {
     const now = new Date()
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
@@ -29,29 +32,117 @@ export const useExpenseStore = defineStore('expense', () => {
   })
 
   const totalCount = computed(() => expenses.value.length)
-  const averageExpense = computed(() => totalCount.value > 0 ? expenses.value.reduce((sum, e) => sum + e.amount, 0) / totalCount.value : 0)
+  const averageExpense = computed(() => 
+    totalCount.value > 0 ? expenses.value.reduce((sum, e) => sum + e.amount, 0) / totalCount.value : 0
+  )
 
-  function addExpense(expenseData) {
-    const newExpense = {
-      id: generateId(),
-      ...expenseData,
-      date: new Date(expenseData.date)
+  /**
+   * Load expenses list from Cloudflare D1
+   */
+  async function fetchExpenses() {
+    try {
+      const data = await api.get('/expenses')
+
+      // Map snake_case SQLite database columns back to camelCase frontend expectations
+      expenses.value = data.map(e => ({
+        id: e.id,
+        amount: e.amount,
+        category: e.category,
+        description: e.description,
+        paymentMethod: e.payment_method,
+        vendor: e.vendor,
+        reference: e.reference,
+        date: e.expense_date ? new Date(e.expense_date) : new Date(e.created_at),
+        createdAt: e.created_at ? new Date(e.created_at) : new Date()
+      }))
+    } catch (error) {
+      console.error('Failed to load expenses from Cloudflare D1:', error)
+      throw error
     }
-    expenses.value.push(newExpense)
-    return newExpense
   }
 
-  function updateExpense(id, updates) {
-    const index = expenses.value.findIndex(e => e.id === id)
-    if (index !== -1) {
-      expenses.value[index] = { ...expenses.value[index], ...updates }
-      return expenses.value[index]
+  /**
+   * Add a new expense record inside Cloudflare D1
+   */
+  async function addExpense(expenseData) {
+    try {
+      const newId = generateId()
+      const now = new Date()
+      const expenseDate = expenseData.date ? new Date(expenseData.date) : now
+
+      // Convert frontend payload properties to match D1 backend schema columns
+      const payload = {
+        id: newId,
+        amount: Number(expenseData.amount),
+        category: expenseData.category,
+        description: expenseData.description || '',
+        payment_method: expenseData.paymentMethod || 'cash',
+        vendor: expenseData.vendor || null,
+        reference: expenseData.reference || null,
+        expense_date: expenseDate.toISOString()
+      }
+
+      await api.post('/expenses', payload)
+
+      const newExpense = {
+        id: newId,
+        ...expenseData,
+        date: expenseDate,
+        createdAt: now
+      }
+
+      expenses.value.push(newExpense)
+      return newExpense
+    } catch (error) {
+      console.error('Failed to save expense inside D1:', error)
+      throw error
     }
-    return null
   }
 
-  function deleteExpense(id) {
-    expenses.value = expenses.value.filter(e => e.id !== id)
+  /**
+   * Update an existing expense record inside Cloudflare D1
+   */
+  async function updateExpense(id, updates) {
+    try {
+      const payload = {
+        amount: updates.amount !== undefined ? Number(updates.amount) : undefined,
+        category: updates.category,
+        description: updates.description,
+        payment_method: updates.paymentMethod,
+        vendor: updates.vendor,
+        reference: updates.reference,
+        expense_date: updates.date ? new Date(updates.date).toISOString() : undefined
+      }
+
+      await api.put(`/expenses/${id}`, payload)
+
+      const index = expenses.value.findIndex(e => e.id === id)
+      if (index !== -1) {
+        expenses.value[index] = { 
+          ...expenses.value[index], 
+          ...updates,
+          date: updates.date ? new Date(updates.date) : expenses.value[index].date
+        }
+        return expenses.value[index]
+      }
+      return null
+    } catch (error) {
+      console.error(`Failed to update expense ${id} inside D1:`, error)
+      throw error
+    }
+  }
+
+  /**
+   * Delete an expense record from Cloudflare D1
+   */
+  async function deleteExpense(id) {
+    try {
+      await api.delete(`/expenses/${id}`)
+      expenses.value = expenses.value.filter(e => e.id !== id)
+    } catch (error) {
+      console.error(`Failed to delete expense ${id} from D1:`, error)
+      throw error
+    }
   }
 
   function getExpenseById(id) {
@@ -64,6 +155,7 @@ export const useExpenseStore = defineStore('expense', () => {
     monthlyTotal,
     totalCount,
     averageExpense,
+    fetchExpenses, // Exposed to pull records from D1 when views mount
     addExpense,
     updateExpense,
     deleteExpense,

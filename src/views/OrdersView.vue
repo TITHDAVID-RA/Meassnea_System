@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useOrderStore } from '@/stores/orderStore'
 import { useStockStore } from '@/stores/stockStore'
+import { useInventoryStore } from '@/stores/inventoryStore'
 import { useIncomeStore } from '@/stores/incomeStore'
 import { useFormatters } from '@/composables/useFormatters'
 import StatCard from '@/components/StatCard.vue'
@@ -11,6 +12,7 @@ import OrderDetailModal from '@/components/modals/OrderDetailModal.vue'
 
 const orderStore = useOrderStore()
 const stockStore = useStockStore()
+const inventoryStore = useInventoryStore()
 const incomeStore = useIncomeStore()
 const { formatCurrency, formatDate } = useFormatters()
 
@@ -33,7 +35,6 @@ const closeMenus = (e) => {
   if (!e.target.closest('.action-wrapper')) activeMenuId.value = null
 }
 
-// ── SYNC WITH D1 DATABASE ON MOUNT ──
 onMounted(async () => {
   window.addEventListener('click', closeMenus)
   try {
@@ -41,7 +42,7 @@ onMounted(async () => {
     if (orderStore.orders.length === 0) promises.push(orderStore.fetchOrders())
     if (stockStore.stockItems.length === 0) promises.push(stockStore.fetchStockData())
     if (incomeStore.incomes.length === 0) promises.push(incomeStore.fetchIncomes())
-    
+
     if (promises.length > 0) {
       await Promise.all(promises)
     }
@@ -75,37 +76,55 @@ const filteredOrders = computed(() => {
     .sort((a, b) => new Date(b.date) - new Date(a.date))
 })
 
+function getPlasticBagCost(order) {
+  // If plasticBagCost is stored and valid, use it
+  if (order.plasticBagCost && order.plasticBagCost > 0) {
+    return order.plasticBagCost
+  }
+
+  // Fallback: calculate from plasticBags array if available
+  const bags = order.plasticBags || []
+  if (bags.length > 0) {
+    let total = 0
+    bags.forEach(bag => {
+      const bagSize = bag.size
+      const bagQty = Number(bag.qty || bag.quantity || 0)
+      if (bagSize && ['S', 'M'].includes(bagSize)) {
+        const unitCost = stockStore.getMaterialUnitCost('ថង់', bagSize)
+        total += bagQty * unitCost
+      }
+    })
+    return total
+  }
+
+  return 0
+}
+
 const totals = computed(() => {
   return filteredOrders.value.reduce(
     (acc, order) => {
       if (order.status === 'completed' || order.status === 'pending') {
         const itemCount = order.items.reduce((sum, item) => sum + item.quantity, 0)
-        const productTotal = order.total - (Number(order.deliveryCost) || 0)
-        const totalCostPrice = order.items.reduce(
-          (sum, item) => sum + (item.costPrice || 0) * item.quantity,
+        const productTotal = order.items.reduce(
+          (sum, item) => sum + (item.unitPrice || 0) * item.quantity,
           0,
         )
-
-        // Get material costs for plastic bag and case box
-        const plasticBagUnitCost = stockStore.getMaterialUnitCost('ថង់', 'N/A')
+        const deliveryCost = Number(order.deliveryCost) || 0
+        const plasticBagCost = getPlasticBagCost(order)
         const caseBoxUnitCost = stockStore.getMaterialUnitCost('កេស', 'N/A')
-        const plasticBagCost = (Number(order.plasticBagQty) || 0) * plasticBagUnitCost
         const caseBoxCost = (Number(order.caseBoxQty) || 0) * caseBoxUnitCost
 
-        // Net income (display) = product total - delivery - bag costs
-        const netIncome =
-          productTotal -
-          (Number(order.deliveryCost) || 0) -
-          plasticBagCost -
-          caseBoxCost
+        const netIncome = Math.max(
+          0,
+          productTotal - deliveryCost - plasticBagCost - caseBoxCost
+        )
 
         acc.items += itemCount
         acc.productTotal += productTotal
-        acc.netIncome += Math.max(0, netIncome)
-        acc.totalCostPrice += totalCostPrice
+        acc.netIncome += netIncome
         acc.plasticBagCost += plasticBagCost
         acc.caseBoxCost += caseBoxCost
-        acc.deliveryCost += Number(order.deliveryCost) || 0
+        acc.deliveryCost += deliveryCost
       }
       return acc
     },
@@ -124,29 +143,27 @@ function getStatusClass(status) {
   return `badge-${status}`
 }
 
-// Calculate per-order financial breakdown
 function getOrderBreakdown(order) {
-  const productTotal = order.total - (Number(order.deliveryCost) || 0)
-  const totalCostPrice = order.items.reduce(
-    (sum, item) => sum + (item.costPrice || 0) * item.quantity,
+  const productTotal = order.items.reduce(
+    (sum, item) => sum + (item.unitPrice || 0) * item.quantity,
     0,
   )
-  const plasticBagUnitCost = stockStore.getMaterialUnitCost('ថង់', 'N/A')
+  const deliveryCost = Number(order.deliveryCost || order.delivery_cost || 0)
+  const plasticBagCost = getPlasticBagCost(order)
+  const caseBoxQty = Number(order.caseBoxQty || order.case_box_qty || 0)
   const caseBoxUnitCost = stockStore.getMaterialUnitCost('កេស', 'N/A')
-  const plasticBagCost = (Number(order.plasticBagQty) || 0) * plasticBagUnitCost
-  const caseBoxCost = (Number(order.caseBoxQty) || 0) * caseBoxUnitCost
-  const deliveryCost = Number(order.deliveryCost) || 0
+  const caseBoxCost = caseBoxQty * caseBoxUnitCost
+
   const netIncome = Math.max(
     0,
-    productTotal - deliveryCost - plasticBagCost - caseBoxCost ,
+    productTotal - deliveryCost - plasticBagCost - caseBoxCost
   )
 
   return {
     productTotal,
-    totalCostPrice,
+    deliveryCost,
     plasticBagCost,
     caseBoxCost,
-    deliveryCost,
     netIncome,
   }
 }
@@ -157,26 +174,20 @@ function viewDetails(id) {
   activeMenuId.value = null
 }
 
-/**
- * CANCEL ORDER
- * - Pending: just cancel, stock already deducted on creation
- * - Completed: return product stock + plastic bags, remove income
- */
 async function cancelOrder(id) {
   if (!confirm('តើអ្នកប្រាកដជាចង់បោះបង់ការកម្មង់នេះមែនទេ?')) return
   const order = orderStore.getOrderById(id)
   if (!order) return
 
   try {
-    // Return product stock to inventory (for both pending and completed)
+    // Return product stock (deducted at order creation regardless of status)
     for (const item of order.items) {
       const product = stockStore.getProductById(item.productId)
       if (product) {
         const previousQty = product.quantity
         await stockStore.adjustStock(item.productId, item.quantity, 'in')
-        
-        // Use stockStore.recordMovement instead of inventoryStore
-        await stockStore.recordMovement({
+
+        await inventoryStore.recordMovement({
           productId: product.id,
           productName: product.name,
           type: 'return',
@@ -192,19 +203,22 @@ async function cancelOrder(id) {
       }
     }
 
-    // Return plastic bags (update original deduction row, don't create new)
-    const pbQty = Number(order.plasticBagQty) || 0
-    if (pbQty > 0) {
-      await stockStore.returnPlasticBag(pbQty, order.orderNumber)
+    // Return plastic bags (deducted at order creation)
+    const bags = order.plasticBags || []
+    for (const bag of bags) {
+      const qty = Number(bag.qty || 0)
+      if (qty > 0 && ['S', 'M'].includes(bag.size)) {
+        await stockStore.returnPlasticBag(bag.size, qty, order.orderNumber)
+      }
     }
 
-    // Return case boxes (update original deduction row, don't create new)
+    // Return case boxes (deducted at order creation)
     const cbQty = Number(order.caseBoxQty) || 0
     if (cbQty > 0) {
       await stockStore.returnCaseBox(cbQty, order.orderNumber)
     }
 
-    // If was completed, remove the income record
+    // Delete income record only if order was completed
     if (order.status === 'completed') {
       const targetIncome = incomeStore.incomes.find((i) => i.orderId === id)
       if (targetIncome) {
@@ -215,33 +229,49 @@ async function cancelOrder(id) {
     await orderStore.cancelOrder(id)
     activeMenuId.value = null
   } catch (error) {
+    console.error('Cancel order error:', error)
     alert('មានបញ្ហាក្នុងការលុបចោលការបញ្ជាទិញ!')
   }
 }
 
-/**
- * COMPLETE ORDER
- * - Pending -> Completed: just add income (stock already deducted on creation)
- */
 async function completeOrder(id) {
   const order = orderStore.getOrderById(id)
   if (!order || order.status !== 'pending') return
 
   try {
-    // Stock was already deducted when order was created
-    // Just add income and update status inside D1
     await orderStore.completeOrder(id)
 
-    // Income = product total - delivery - bags - costPrice
-    const breakdown = getOrderBreakdown(order)
-    const incomeAmount = Math.max(
-      0,
-      breakdown.productTotal -
-      breakdown.deliveryCost -
-      breakdown.plasticBagCost -
-      breakdown.caseBoxCost -
-      breakdown.totalCostPrice
+    // Calculate income the SAME WAY as createOrder()
+    const itemsTotal = order.items.reduce(
+      (sum, item) => sum + (Number(item.unitPrice || 0) * Number(item.quantity || 1)),
+      0
     )
+    const deliveryCost = Number(order.deliveryCost || 0)
+    const totalCostPrice = order.items.reduce(
+      (sum, item) => sum + (Number(item.costPrice || 0) * Number(item.quantity || 1)),
+      0
+    )
+
+    // Calculate plastic bag cost from bags array
+    const plasticBags = order.plasticBags || []
+    let totalPlasticBagCost = 0
+    plasticBags.forEach(bag => {
+      const bagSize = bag.size
+      const bagQty = Number(bag.qty || bag.quantity || 0)
+      if (bagSize && ['S', 'M'].includes(bagSize)) {
+        const unitCost = stockStore.getMaterialUnitCost('ថង់', bagSize)
+        totalPlasticBagCost += bagQty * unitCost
+      }
+    })
+
+    // Calculate case box cost
+    const caseBoxQty = Number(order.caseBoxQty || 0)
+    const caseBoxUnitCost = stockStore.getMaterialUnitCost('កេស', 'N/A')
+    const totalCaseBoxCost = caseBoxQty * caseBoxUnitCost
+
+    // Net profit = items total - cost price - plastic bags - case boxes - delivery
+    const netProfit = itemsTotal - totalCostPrice - totalPlasticBagCost - totalCaseBoxCost - deliveryCost
+    const incomeAmount = Number(Math.max(0, netProfit).toFixed(2))
 
     await incomeStore.addIncome({
       date: new Date(),
@@ -256,6 +286,7 @@ async function completeOrder(id) {
 
     activeMenuId.value = null
   } catch (error) {
+    console.error('Complete order error:', error)
     alert('មានបញ្ហាក្នុងការបញ្ចប់ការបញ្ជាទិញ!')
   }
 }
@@ -322,11 +353,9 @@ async function completeOrder(id) {
                   ({{ order.items.reduce((sum, item) => sum + item.quantity, 0) }} units)
                 </small>
               </td>
-              <!-- Product Price (old) -->
               <td class="amount-cell">
                 <strong>{{ formatCurrency(getOrderBreakdown(order).productTotal) }}</strong>
               </td>
-              <!-- Net Income (new) -->
               <td class="amount-cell net-income-cell">
                 <div v-if="order.status !== 'cancelled'">
                   <strong class="text-success">{{
@@ -375,7 +404,6 @@ async function completeOrder(id) {
             </tr>
           </tbody>
           <tfoot class="table-footer-fixed">
-            <!-- Row 1: Total Product Price -->
             <tr class="total-row-product">
               <td colspan="4" class="text-right"></td>
               <td class="amount-cell">
@@ -422,7 +450,6 @@ async function completeOrder(id) {
   font-family: monospace;
 }
 
-/* Footer row styles */
 .total-row-product {
   background-color: #f0f9ff !important;
 }
@@ -453,7 +480,6 @@ async function completeOrder(id) {
   color: #16a34a;
 }
 
-/* Net income cell styles */
 .net-income-cell {
   min-width: 140px;
 }

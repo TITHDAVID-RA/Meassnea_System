@@ -83,6 +83,19 @@ export function useExcelExport() {
     return { unitPrice, totalPrice }
   }
 
+  // ─── NEW: Plastic bag display helpers ──────────────────────────────────
+  function getPlasticBagDisplay(order) {
+    if (!order.plasticBags || !Array.isArray(order.plasticBags) || order.plasticBags.length === 0) {
+      return 'គ្មាន'
+    }
+    return order.plasticBags.map(b => `${b.size}x${b.qty}`).join(', ')
+  }
+
+  function getPlasticBagCostDisplay(order) {
+    if (!order.plasticBagCost || order.plasticBagCost === 0) return '$0.00'
+    return formatCurrency(order.plasticBagCost)
+  }
+
   function styleSheet(ws, theme) {
     if (!ws['!ref']) return
     const range = XLSX.utils.decode_range(ws['!ref'])
@@ -270,6 +283,7 @@ export function useExcelExport() {
       XLSX.utils.book_append_sheet(wb, wsMaterialOut, 'សម្ភារៈចេញ')
 
       // ── SHEET 4: Orders (Light Purple Theme) ──
+      // ─── NEW: Added plastic bag columns ─────────────────────────────────
       const orderData = orderStore.orders
         .filter(o => isWithinRange(o.date || o.createdAt, start, end))
         .map(o => {
@@ -280,6 +294,8 @@ export function useExcelExport() {
             ស្ថានភាព: o.status,
             តម្លៃសរុប: formatCurrency(o.total),
             ទំនិញ: itemsSummary,
+            ថង់: getPlasticBagDisplay(o),
+            'ថ្លៃថង់': getPlasticBagCostDisplay(o),
             កាលបរិច្ឆេទចេញវិក្កយបត្រ: formatDate(o.createdAt),
             កត់ត្រា: o.notes || ''
           }

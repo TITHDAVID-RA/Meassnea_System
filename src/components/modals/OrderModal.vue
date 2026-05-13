@@ -18,12 +18,12 @@ const form = ref({
   customer: '',
   paymentMethod: 'cash',
   status: 'pending',
-  plasticBagQty: 1,
   caseBoxQty: 0,
   deliveryCost: 0
 })
 
 const items = ref([])
+const plasticBags = ref([])
 
 const availableProducts = computed(() => {
   const allItems = stockStore.stockItems.filter(item => item.quantity > 0)
@@ -35,7 +35,7 @@ const availableProducts = computed(() => {
 
 const total = computed(() => {
   const itemsTotal = items.value.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0)
-  return itemsTotal + (Number(form.value.deliveryCost) || 0)
+  return itemsTotal 
 })
 
 function addItem() { items.value.push({ productId: '', quantity: 1, unitPrice: 0, costPrice: 0 }) }
@@ -49,6 +49,9 @@ function updateItemPrice(index) {
   }
 }
 
+function addPlasticBag() { plasticBags.value.push({ size: 'S', qty: 1 }) }
+function removePlasticBag(index) { plasticBags.value.splice(index, 1) }
+
 function close() {
   emit('update:modelValue', false)
   resetForm()
@@ -60,17 +63,16 @@ function resetForm() {
     customer: '', 
     paymentMethod: 'cash', 
     status: 'pending', 
-    plasticBagQty: 1,
     caseBoxQty: 0,
     deliveryCost: 0 
   }
   items.value = []
+  plasticBags.value = []
 }
 
 async function save() {
   if (items.value.length === 0) return alert('សូមជ្រើសរើសទំនិញយ៉ាងតិចមួយ')
 
-  // Validate stock availability before creating order
   for (const item of items.value) {
     const product = stockStore.getProductById(item.productId)
     if (!product) return alert('ទំនិញមិនត្រឹមត្រូវ')
@@ -79,14 +81,26 @@ async function save() {
     }
   }
 
-  // បង្កើត orderData ដោយធានាថា រាល់តម្លៃលេខទាំងអស់ត្រូវបានបំប្លែងទៅជា Number ត្រឹមត្រូវដាច់ខាត
+  // Calculate plastic bag cost
+  let plasticBagCost = 0
+  for (const bag of plasticBags.value) {
+    if (bag.qty > 0 && ['S', 'M'].includes(bag.size)) {
+      const unitCost = stockStore.getMaterialUnitCost('ថង់', bag.size)
+      plasticBagCost += (Number(bag.qty) || 0) * unitCost
+    }
+  }
+
   const orderData = { 
     customer: form.value.customer,
     paymentMethod: form.value.paymentMethod,
     status: form.value.status,
-    plasticBagQty: Number(form.value.plasticBagQty || 0),
+    plasticBags: plasticBags.value.map(bag => ({
+      size: bag.size,
+      qty: Number(bag.qty || 0)
+    })).filter(bag => bag.qty > 0),
+    plasticBagCost: Number(plasticBagCost.toFixed(2)),
     caseBoxQty: Number(form.value.caseBoxQty || 0),
-    deliveryCost: Number(form.value.deliveryCost || 0), // ◄─── បំប្លែងទៅជាលេខ
+    deliveryCost: Number(form.value.deliveryCost || 0),
     date: form.value.date,
     items: items.value.map(item => {
       const product = stockStore.getProductById(item.productId)
@@ -95,24 +109,22 @@ async function save() {
         productName: product?.name || '',
         quantity: Number(item.quantity || 1),
         unitPrice: Number(item.unitPrice || 0),
-        costPrice: Number(product?.costPrice || 0), // ◄─── ទាញយកតម្លៃដើមពី Stock ផ្ទាល់មកដាក់ក្នុង Order Item
+        costPrice: Number(product?.costPrice || 0),
         total: Number((item.quantity * item.unitPrice).toFixed(2))
       }
     }), 
-    total: Number(total.value) // ◄─── បំប្លែងតម្លៃលក់សរុបជាលេខ
+    total: Number(total.value)
   }
 
   try {
-    // 1. Create Order
     const order = await orderStore.createOrder(orderData)
 
-    // 2. Deduct stock immediately for ALL orders
     for (const item of items.value) {
       const product = stockStore.getProductById(item.productId)
       if (product) {
         const previousQty = product.quantity
         await stockStore.adjustStock(item.productId, item.quantity, 'out')
-        
+
         await inventoryStore.recordMovement({
           productId: product.id,
           productName: product.name,
@@ -129,12 +141,12 @@ async function save() {
       }
     }
 
-    // 3. Deduct Plastic Bag
-    if (form.value.plasticBagQty > 0) {
-      await stockStore.deductPlasticBag(Number(form.value.plasticBagQty) || 0, order.orderNumber)
+    for (const bag of plasticBags.value) {
+      if (bag.qty > 0 && ['S', 'M'].includes(bag.size)) {
+        await stockStore.deductPlasticBag(bag.size, Number(bag.qty), order.orderNumber)
+      }
     }
 
-    // 4. Deduct កេស (Case Box)
     if (form.value.caseBoxQty > 0) {
       await stockStore.materialStockOut({
         materialName: 'កេស',
@@ -192,17 +204,36 @@ async function save() {
               </div>
             </div>
 
-            <div class="form-row charges-row">
-              <div class="form-group">
-                <label>ចំនួនថង់ (Plastic Bags)</label>
-                <input type="number" v-model.number="form.plasticBagQty" min="0" class="form-input">
+            <div class="items-section plastic-bag-section">
+              <div class="section-header">
+                <h3>ថង់ផ្លាស្ទិក (Plastic Bags)</h3>
+                <button type="button" class="btn-add-item" @click="addPlasticBag">
+                  <i class="fas fa-plus"></i> បន្ថែមថង់
+                </button>
               </div>
+              <div class="items-list">
+                <div v-for="(bag, index) in plasticBags" :key="index" class="order-item-row plastic-bag-row">
+                  <div class="item-product">
+                    <select v-model="bag.size" class="form-select">
+                      <option value="S">ថង់ S</option>
+                      <option value="M">ថង់ M</option>
+                    </select>
+                  </div>
+                  <div class="item-qty">
+                    <input type="number" v-model.number="bag.qty" placeholder="ចំនួន" min="1" class="form-input">
+                  </div>
+                  <button type="button" class="remove-item-btn" @click="removePlasticBag(index)">
+                    <i class="fas fa-trash"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="form-row charges-row">
               <div class="form-group">
                 <label>ចំនួនកេស (Case Boxes)</label>
                 <input type="number" v-model.number="form.caseBoxQty" min="0" class="form-input">
               </div>
-            </div>
-            <div class="form-row charges-row">
               <div class="form-group">
                 <label>ថ្លៃដឹកជញ្ជូន (Delivery $)</label>
                 <input type="number" v-model.number="form.deliveryCost" min="0" step="0.01" class="form-input">
@@ -314,6 +345,10 @@ async function save() {
 .form-input.readonly { background: #f3f4f6; cursor: not-allowed; }
 .charges-row { background-color: #f0f9ff; padding: 16px; border-radius: 10px; border: 1px solid #bae6fd; }
 .items-section { margin-top: 24px; padding-top: 20px; border-top: 2px solid #e2e8f0; }
+.plastic-bag-section { background-color: #fefce8; border: 1px solid #fde047; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+.plastic-bag-section .section-header { margin-bottom: 12px; }
+.plastic-bag-section h3 { color: #854d0e; font-size: 1rem; }
+.plastic-bag-row { background: #fffbeb; border-color: #fcd34d; }
 .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 .btn-add-item { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: #3b82f6; color: white; border: none; border-radius: 8px; cursor: pointer; }
 .items-list { display: flex; flex-direction: column; gap: 12px; }
@@ -327,9 +362,23 @@ async function save() {
   border-radius: 8px; 
   border: 1px solid #e2e8f0; 
 }
+.plastic-bag-row {
+  display: grid;
+  grid-template-columns: 1fr 120px 40px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  background: #fffbeb;
+  border-radius: 8px;
+  border: 1px solid #fcd34d;
+}
 
 @media (max-width: 640px) {
   .order-item-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .plastic-bag-row {
     grid-template-columns: 1fr;
     gap: 8px;
   }

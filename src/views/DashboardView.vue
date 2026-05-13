@@ -20,10 +20,8 @@ const startDate = ref('')
 const endDate = ref('')
 const exportRange = ref('all') // 'all' | '3months' | '6months' | '1year'
 
-// Replace your current onMounted with this:
 onMounted(async () => {
   try {
-    // Only fetch if store is empty (first visit)
     const promises = []
     if (incomeStore.incomes.length === 0) promises.push(incomeStore.fetchIncomes())
     if (expenseStore.expenses.length === 0) promises.push(expenseStore.fetchExpenses())
@@ -59,7 +57,7 @@ const filteredExpenses = computed(() => {
 
 const filteredOrders = computed(() => {
   return orderStore.orders.filter(
-    (o) => isWithinRange(o.date, startDate.value, endDate.value) && o.status === 'completed',
+    (o) => isWithinRange(o.date || o.createdAt, startDate.value, endDate.value) && o.status === 'completed',
   )
 })
 
@@ -150,6 +148,19 @@ function getMaterialPrices(tx, rawQty) {
   return { unitPrice, totalPrice }
 }
 
+// ─── NEW: Plastic bag display helpers ──────────────────────────────────
+function getPlasticBagDisplay(order) {
+  if (!order.plasticBags || !Array.isArray(order.plasticBags) || order.plasticBags.length === 0) {
+    return 'គ្មាន'
+  }
+  return order.plasticBags.map(b => `${b.size}x${b.qty}`).join(', ')
+}
+
+function getPlasticBagCostDisplay(order) {
+  if (!order.plasticBagCost || order.plasticBagCost === 0) return '$0.00'
+  return fmtCurrency(order.plasticBagCost)
+}
+
 function styleSheet(ws, theme) {
   if (!ws['!ref']) return
   const range = XLSX.utils.decode_range(ws['!ref'])
@@ -227,7 +238,6 @@ async function exportAllToExcel() {
     const wb = XLSX.utils.book_new()
     const timestamp = new Date().toISOString().split('T')[0]
 
-    // ── SHEET 1: Stock Products (Light Blue Theme) ──
     const stockData = stockStore.stockItems.map((s) => ({
       ឈ្មោះផលិតផល: s.name,
       ដើម: s.initialQuantity,
@@ -264,7 +274,6 @@ async function exportAllToExcel() {
       XLSX.utils.book_append_sheet(wb, wsStock, 'ស្តុកផលិតផល')
     }
 
-    // ── SHEET 2: Material In (Light Green Theme) ──
     const materialInData = stockStore.materialTransactions
       .filter((tx) => tx.type === 'in' && tx.materialName !== 'ពលកម្ម' && isWithinRange(tx.date, start, end))
       .map((tx) => {
@@ -311,7 +320,6 @@ async function exportAllToExcel() {
       XLSX.utils.book_append_sheet(wb, wsMaterialIn, 'សម្ភារៈចូល')
     }
 
-    // ── SHEET 3: Material Out (Light Red/Rose Theme) ──
     const materialOutData = stockStore.materialTransactions
       .filter((tx) => tx.type === 'out' && tx.materialName !== 'ពលកម្ម' && isWithinRange(tx.date, start, end))
       .map((tx) => {
@@ -373,7 +381,7 @@ async function exportAllToExcel() {
     })
     XLSX.utils.book_append_sheet(wb, wsMaterialOut, 'សម្ភារៈចេញ')
 
-    // ── SHEET 4: Orders (Light Purple Theme) ──
+    // ─── NEW: Added plastic bag columns to orders ────────────────────────
     const orderData = orderStore.orders
       .filter((o) => isWithinRange(o.date || o.createdAt, start, end))
       .map((o) => {
@@ -388,6 +396,8 @@ async function exportAllToExcel() {
           ស្ថានភាព: o.status,
           តម្លៃសរុប: fmtCurrency(o.total),
           ទំនិញ: itemsSummary,
+          ថង់: getPlasticBagDisplay(o),
+          'ថ្លៃថង់': getPlasticBagCostDisplay(o),
           កាលបរិច្ឆេទចេញវិក្កយបត្រ: formatDate(o.createdAt),
           កត់ត្រា: o.notes || '',
         }
@@ -412,7 +422,6 @@ async function exportAllToExcel() {
       XLSX.utils.book_append_sheet(wb, wsOrders, 'ការកម្មង់')
     }
 
-    // ── SHEET 5: Assets (Light Orange Theme) ──
     const assetData = assetStore.assets
       .filter((a) => isWithinRange(a.purchaseDate || a.date, start, end))
       .map((a) => ({
@@ -451,7 +460,6 @@ async function exportAllToExcel() {
       XLSX.utils.book_append_sheet(wb, wsAssets, 'ទ្រព្យសកម្ម')
     }
 
-    // ── SHEET 6: Income (Light Teal Theme) ──
     const incomeData = incomeStore.incomes
       .filter((i) => isWithinRange(i.date, start, end))
       .map((i) => ({
@@ -494,7 +502,6 @@ async function exportAllToExcel() {
       XLSX.utils.book_append_sheet(wb, wsIncome, 'ចំណូល')
     }
 
-    // ── SHEET 7: Expenses (Light Pink Theme) ──
     const expenseData = expenseStore.expenses
       .filter((e) => isWithinRange(e.date, start, end))
       .map((e) => ({

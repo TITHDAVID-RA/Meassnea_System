@@ -111,6 +111,26 @@ function getKhmerMaterialName(name) {
   return map[key] || name
 }
 
+// Helper to get display label for material sizes
+function getSizeDisplayLabel(materialName, size) {
+  if (materialName === 'ថង់វេចខ្ចប់' && size === 'M') {
+    return 'កំប៉ុង (M)'
+  }
+  if (materialName === 'ថង់') {
+    return `ថង់ ${size}`
+  }
+  return 'ទំហំ ' + size
+}
+
+// Helper to check if a material size should be displayed
+function shouldShowMaterialSize(materialName, size) {
+  // ថង់ only supports S and M (no L)
+  if (materialName === 'ថង់' && size === 'L') {
+    return false
+  }
+  return true
+}
+
 // Group material transactions by material name for expandable rows
 const materialGroups = computed(() => {
   const groups = {}
@@ -217,16 +237,18 @@ const materialGroups = computed(() => {
   return Object.values(groups).sort((a, b) => a.materialName.localeCompare(b.materialName))
 })
 
-// Calculate material cost breakdown for a product size
+// Calculate material cost breakdown for a product size using last price (តម្លៃចុងក្រោយ)
 function getMaterialCostBreakdown(size) {
   if (!size || !['S', 'M', 'L'].includes(size)) return []
 
   const breakdown = []
   const teaGrams = stockStore.TEA_GRAMS_PER_SIZE[size] || 0
 
-  // Sized materials (packaging)
-  stockStore.SIZED_MATERIALS.forEach(matName => {
-    const cost = stockStore.getMaterialUnitCost(matName, size)
+  // Production materials only (exclude ថង់ - deducted via orders, not production)
+  // Use last price (តម្លៃចុងក្រោយ) for accurate current cost breakdown
+  const PRODUCTION_MATERIALS = stockStore.SIZED_MATERIALS.filter(m => m !== 'ថង់')
+  PRODUCTION_MATERIALS.forEach(matName => {
+    const cost = stockStore.getLastMaterialPrice(matName, size)
     if (cost > 0) {
       breakdown.push({ name: matName, cost: cost, unit: 'ឯកតា' })
     }
@@ -239,8 +261,8 @@ function getMaterialCostBreakdown(size) {
     breakdown.push({ name: `តែ (${teaGrams}g)`, cost: teaCost, unit: `${teaGrams}g` })
   }
 
-  // Labor cost
-  const laborCost = stockStore.getMaterialUnitCost('ពលកម្ម', size)
+  // Labor cost - use last price
+  const laborCost = stockStore.getLastMaterialPrice('ពលកម្ម', size)
   if (laborCost > 0) {
     breakdown.push({ name: 'ពលកម្ម', cost: laborCost, unit: 'ឯកតា' })
   }
@@ -540,7 +562,7 @@ async function handleMaterialSave(data) {
                     }"
                   >
                     <template v-if="group.materialName === 'ពលកម្ម'">
-                      {{ formatCurrency(Object.values(group.sizes)[0]?.avgPrice || 0) }}
+                      {{ formatCurrency(stockStore.getLastMaterialPrice(group.materialName, Object.values(group.sizes)[0]?.size || 'N/A')) }}
                       <span class="unit-label">/ឯកតា</span>
                     </template>
                     <template v-else-if="group.isDerived">
@@ -573,17 +595,13 @@ async function handleMaterialSave(data) {
                     </div>
                     <div class="size-detail-grid">
                       <div
-                        v-for="sizeGroup in Object.values(group.sizes)"
+                        v-for="sizeGroup in Object.values(group.sizes).filter(s => shouldShowMaterialSize(group.materialName, s.size))"
                         :key="sizeGroup.size"
                         class="size-detail-card"
                         :class="{ 'low-stock': sizeGroup.balance <= 10 && group.materialName !== 'ពលកម្ម' }"
                       >
                         <div class="size-title">
-                          {{
-                            sizeGroup.size === 'M' && group.materialName === 'ថង់វេចខ្ចប់'
-                              ? 'កំប៉ុង (M)'
-                              : 'ទំហំ ' + sizeGroup.size
-                          }}
+                          {{ getSizeDisplayLabel(group.materialName, sizeGroup.size) }}
                           <span v-if="group.isDerived" class="tea-price-hint">
                             {{ formatCurrency(sizeGroup.teaPricePerGram * 100) }}/100g (ដោយដៃ)
                           </span>
@@ -645,9 +663,10 @@ async function handleMaterialSave(data) {
                             </div>
                             <div class="stat">
                               <span class="stat-label">តម្លៃជាមធ្យម</span>
-                              <span class="stat-value">{{
-                                formatCurrency(sizeGroup.avgPrice)
-                              }}</span>
+                              <span class="stat-value">
+                                {{ formatCurrency(stockStore.getLastMaterialPrice(group.materialName, sizeGroup.size)) }}
+                                <small class="single-tx-note">(តម្លៃចុងក្រោយ)</small>
+                              </span>
                             </div>
                           </template>
                         </div>
@@ -1287,5 +1306,12 @@ async function handleMaterialSave(data) {
 .hide-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+.single-tx-note {
+  font-size: 0.7rem;
+  color: #64748b;
+  font-weight: 400;
+  margin-left: 4px;
 }
 </style>

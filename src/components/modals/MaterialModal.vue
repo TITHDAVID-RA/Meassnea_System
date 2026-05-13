@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { useStockStore } from '@/stores/stockStore'
 
 const props = defineProps({
@@ -18,12 +18,12 @@ const teaPricePerGram = ref(stockStore.getTeaPricePerGram())
 
 // Material configuration: name, hasSize, onlyPrice (no qty, just unit price)
 const materialConfig = [
+  { key: 'plasticBag', name: 'ថង់', hasSize: true, onlyPrice: false },
   { key: 'packageBag', name: 'ថង់វេចខ្ចប់', hasSize: true, onlyPrice: false },
   { key: 'box', name: 'ប្រអប់', hasSize: true, onlyPrice: false },
   { key: 'card', name: 'Leafleap', hasSize: true, onlyPrice: false },
   { key: 'labor', name: 'ពលកម្ម', hasSize: true, onlyPrice: true },
   { key: 'teaPowder', name: 'ទាបបារាំង', hasSize: false, onlyPrice: false, isKg: true },
-  { key: 'plasticBag', name: 'ថង់', hasSize: false, onlyPrice: false },
   { key: 'caseBox', name: 'កេស', hasSize: false, onlyPrice: false }
 ]
 
@@ -62,12 +62,36 @@ function initForm() {
 
 initForm()
 
-watch(() => props.modelValue, (visible) => {
+watch(() => props.modelValue, async (visible) => {
   if (visible) {
     date.value = new Date().toISOString().split('T')[0]
     notes.value = ''
     teaPricePerGram.value = stockStore.getTeaPricePerGram()
-    initForm()
+
+    // Build form data with pre-filled prices from last purchase (តម្លៃចុងក្រោយ)
+    const obj = {}
+    materialConfig.forEach(mat => {
+      obj[mat.key] = {}
+      if (mat.hasSize) {
+        Object.keys(sizeLabels).forEach(size => {
+          const lastPrice = stockStore.getLastMaterialPrice(mat.name, size)
+          obj[mat.key][size] = { 
+            qty: 0, 
+            price: lastPrice > 0 ? Number(lastPrice.toFixed(2)) : 0 
+          }
+        })
+      } else {
+        const lastPrice = stockStore.getLastMaterialPrice(mat.name, 'N/A')
+        obj[mat.key]['N/A'] = { 
+          qty: 0, 
+          price: lastPrice > 0 ? Number(lastPrice.toFixed(2)) : 0 
+        }
+      }
+    })
+    formData.value = obj
+
+    // Ensure DOM updates with the new values
+    await nextTick()
   }
 })
 
@@ -216,7 +240,8 @@ function close() {
 
                 <div class="size-grid">
                   <template v-if="mat.hasSize">
-                    <div v-for="(label, size) in sizeLabels" :key="size" class="size-input-block">
+                    <div v-for="(label, size) in sizeLabels" :key="size" class="size-input-block"
+                         v-show="mat.key !== 'plasticBag' || size !== 'L'">
                       <label class="size-label">
                         {{ mat.key === 'packageBag' && size === 'M' ? 'កំប៉ុង (M)' : label }}
                       </label>

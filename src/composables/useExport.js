@@ -38,7 +38,7 @@ export function useExcelExport() {
         start = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate(), 0, 0, 0, 0)
         break
       default:
-        return { start: null, end: null } // all data
+        return { start: null, end: null }
     }
     return { start, end }
   }
@@ -70,7 +70,7 @@ export function useExcelExport() {
       const latestInTx = stockStore.materialTransactions
         .filter(t => t.type === 'in' && t.materialName === tx.materialName && (tx.size ? t.size === tx.size : true))
         .sort((a, b) => new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt))[0]
-      
+
       if (latestInTx) {
         unitPrice = parsePrice(latestInTx.unitPrice || latestInTx.unit_price || latestInTx.price || latestInTx.cost || latestInTx.costPrice)
       }
@@ -83,7 +83,6 @@ export function useExcelExport() {
     return { unitPrice, totalPrice }
   }
 
-  // ─── NEW: Plastic bag display helpers ──────────────────────────────────
   function getPlasticBagDisplay(order) {
     if (!order.plasticBags || !Array.isArray(order.plasticBags) || order.plasticBags.length === 0) {
       return 'គ្មាន'
@@ -135,10 +134,7 @@ export function useExcelExport() {
           cell.s = {
             font: { sz: 10, name: 'Khmer OS Battambang' },
             fill: { fgColor: { rgb: colBgColor }, patternType: 'solid' },
-            alignment: {
-              horizontal: isNumeric ? 'right' : 'left',
-              vertical: 'center'
-            },
+            alignment: { horizontal: isNumeric ? 'right' : 'left', vertical: 'center' },
             border: gridBorder
           }
         }
@@ -265,14 +261,7 @@ export function useExcelExport() {
       const wsMaterialOut = materialOutData.length > 0
         ? XLSX.utils.json_to_sheet(materialOutData)
         : XLSX.utils.json_to_sheet([{
-          ឈ្មោះសម្ភារៈ: '',
-          ទំហំ: '',
-          បរិមាណ: '',
-          ឯកតា: '',
-          តម្លៃឯកតា: '',
-          តម្លៃសរុប: '',
-          កាលបរិច្ឆេទចេញ: '',
-          កត់ត្រា: ''
+          ឈ្មោះសម្ភារៈ: '', ទំហំ: '', បរិមាណ: '', ឯកតា: '', តម្លៃឯកតា: '', តម្លៃសរុប: '', កាលបរិច្ឆេទចេញ: '', កត់ត្រា: ''
         }])
 
       styleSheet(wsMaterialOut, {
@@ -283,7 +272,6 @@ export function useExcelExport() {
       XLSX.utils.book_append_sheet(wb, wsMaterialOut, 'សម្ភារៈចេញ')
 
       // ── SHEET 4: Orders (Light Purple Theme) ──
-      // ─── NEW: Added plastic bag columns ─────────────────────────────────
       const orderData = orderStore.orders
         .filter(o => isWithinRange(o.date || o.createdAt, start, end))
         .map(o => {

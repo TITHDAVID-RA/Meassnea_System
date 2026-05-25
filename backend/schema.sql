@@ -1,4 +1,4 @@
-PRAGMA foreign_keys = ON;
+PRAGMA foreign_keys = OFF;
 
 -- Users
 CREATE TABLE IF NOT EXISTS users (
@@ -55,6 +55,8 @@ INSERT OR IGNORE INTO materials (id, name, name_khmer, type, unit, size, quantit
   ('mat_4_m', 'box', 'ប្រអប់', 'sized', 'unit', 'M', 0, 0, 0),
   ('mat_5_s', 'leafleap', 'Leafleap', 'sized', 'unit', 'S', 0, 0, 0),
   ('mat_5_m', 'leafleap', 'Leafleap', 'sized', 'unit', 'M', 0, 0, 0),
+  ('mat_sticker_m', 'sticker', 'ស្ទីកគ័រ', 'sized', 'unit', 'M', 0, 0, 0),
+  ('mat_sticker_l', 'sticker', 'ស្ទីកគ័រ', 'sized', 'unit', 'L', 0, 0, 0),
   ('mat_6', 'tea_powder', 'ទាបបារាំង', 'kg', 'kg', 'N/A', 0, 0, 0),
   ('mat_7', 'labor', 'ពលកម្ម', 'labor', 'unit', 'N/A', 0, 0, 1),
   ('mat_8', 'tea', 'តែ', 'derived', 'kg', 'N/A', 0, 0, 0);

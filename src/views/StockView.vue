@@ -128,6 +128,14 @@ function shouldShowMaterialSize(materialName, size) {
   if (materialName === 'ថង់' && size === 'L') {
     return false
   }
+  // ប្រអប់ and Leafleap don't have size L
+  if ((materialName === 'ប្រអប់' || materialName === 'Leafleap') && size === 'L') {
+    return false
+  }
+  // ស្ទីកគ័រ only supports M and L (no S)
+  if (materialName === 'ស្ទីកគ័រ' && size === 'S') {
+    return false
+  }
   return true
 }
 
@@ -135,7 +143,7 @@ function shouldShowMaterialSize(materialName, size) {
 const materialGroups = computed(() => {
   const groups = {}
   stockStore.materialTransactions
-    .filter((tx) => tx.type === 'in' && matchesDateFilter(tx.date))
+    .filter((tx) => tx.type === 'in' && tx.quantity > 0 && matchesDateFilter(tx.date))
     .sort((a, b) => new Date(b.date) - new Date(a.date))
     .forEach((tx) => {
       const khmerName = getKhmerMaterialName(tx.materialName)
@@ -169,8 +177,9 @@ const materialGroups = computed(() => {
     })
 
   // Calculate balance by subtracting out transactions (skip labor - price only)
+  // Exclude transactions with quantity 0 (cancelled/returned orders)
   stockStore.materialTransactions
-    .filter((tx) => tx.type === 'out' && tx.materialName !== 'ពលកម្ម')
+    .filter((tx) => tx.type === 'out' && tx.materialName !== 'ពលកម្ម' && tx.quantity > 0)
     .forEach((tx) => {
       const khmerName = getKhmerMaterialName(tx.materialName)
       const group = groups[khmerName]
@@ -274,6 +283,17 @@ const totalRemainingQuantity = computed(() => {
   return filteredBatches.value.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)
 })
 
+// Format number showing up to 4 decimal places, stripping trailing zeros
+function formatNumber4(value) {
+  const num = Number(value) || 0
+  // Round to 4 decimal places, then strip trailing zeros
+  const fixed = num.toFixed(4)
+  // Remove trailing zeros
+  const trimmed = fixed.replace(/0+$/, '')
+  // Remove trailing dot if any
+  return trimmed.replace(/\.$/, '')
+}
+
 function toggleDetail(item) {
   selectedBatchDetail.value = selectedBatchDetail.value?.id === item.id ? null : item
 }
@@ -297,6 +317,33 @@ async function deleteBatch(id) {
       alert('មានបញ្ហាក្នុងការលុបផលិតផល!')
     }
   }
+}
+
+async function deleteMaterialTransaction(id) {
+  if (confirm('តើអ្នកពិតជាចង់លុបប្រតិបត្តិការនេះមែនទេ?')) {
+    try {
+      await stockStore.deleteMaterialTransaction(id)
+    } catch (error) {
+      if (error.message === 'MATERIAL_IN_USE') {
+        alert('មិនអាចលុបបានទេ! វត្ថុធាតុដើមនេះត្រូវបានប្រើរួចហើយ (មានប្រតិបត្តិការកាត់ចេញ)។')
+      } else {
+        alert('មានបញ្ហាក្នុងការលុបប្រតិបត្តិការ!')
+      }
+    }
+  }
+}
+
+// Check if a material transaction can be deleted (not in use)
+function canDeleteTransaction(tx) {
+  // Only 'in' transactions can potentially be blocked
+  if (tx.type !== 'in') return true
+
+  // Check if there's any 'out' transaction for the same material+size
+  return !stockStore.materialTransactions.some(t =>
+    t.type === 'out' &&
+    t.materialName === tx.materialName &&
+    t.size === tx.size
+  )
 }
 
 // Converted to async to wait for local D1 processing
@@ -447,12 +494,12 @@ async function handleMaterialSave(data) {
                     </div>
                     <div class="asset-detail-item">
                       <span class="label">តម្លៃដើម:</span>
-                      <strong class="text-danger">{{ formatCurrency(item.costPrice) }}</strong>
+                      <strong class="text-danger">{{ formatNumber4(item.costPrice) }}</strong>
                     </div>
                     <div class="asset-detail-item">
                       <span class="label">តម្លៃដើមសរុប:</span>
                       <strong class="text-primary">{{
-                        formatCurrency(item.initialQuantity * item.costPrice)
+                        formatNumber4(item.initialQuantity * item.costPrice)
                       }}</strong>
                     </div>
                   </div>
@@ -469,11 +516,11 @@ async function handleMaterialSave(data) {
                         class="breakdown-item"
                       >
                         <span class="breakdown-name">{{ mat.name }}</span>
-                        <span class="breakdown-cost">{{ formatCurrency(mat.cost) }}</span>
+                        <span class="breakdown-cost">{{ formatNumber4(mat.cost) }}</span>
                       </div>
                       <div class="breakdown-item total">
                         <span class="breakdown-name">សរុបថ្លៃដើមវត្ថុធាតុដើម</span>
-                        <span class="breakdown-cost">{{ formatCurrency(getMaterialCostBreakdown(item.name.match(/\((S|M|L)\)/)?.[1]).reduce((s, m) => s + m.cost, 0)) }}</span>
+                        <span class="breakdown-cost">{{ formatNumber4(getMaterialCostBreakdown(item.name.match(/\((S|M|L)\)/)?.[1]).reduce((s, m) => s + m.cost, 0)) }}</span>
                       </div>
                     </div>
                   </div>
@@ -673,10 +720,13 @@ async function handleMaterialSave(data) {
 
                         <!-- Transaction History -->
                         <div v-if="group.materialName !== 'ពលកម្ម' && !group.isDerived" class="tx-history">
-                          <div class="tx-header">ប្រវត្តិប្រតិបត្តិការ</div>
+                          <div class="tx-header">
+                            <span>ប្រវត្តិប្រតិបត្តិការ</span>
+                            <span class="tx-count" v-if="sizeGroup.transactions.filter(t => t.quantity > 0).length > 5">+{{ sizeGroup.transactions.filter(t => t.quantity > 0).length - 5 }} បន្ថែម</span>
+                          </div>
                           <div class="tx-scroll hide-scrollbar">
                             <div
-                              v-for="tx in sizeGroup.transactions.slice(0, 3)"
+                              v-for="tx in sizeGroup.transactions.filter(t => t.quantity > 0).slice(0, 5)"
                               :key="tx.id"
                               class="tx-item"
                             >
@@ -686,6 +736,17 @@ async function handleMaterialSave(data) {
                                 >{{ formatCurrency(tx.totalPrice / tx.quantity) }}/ឯកតា</span
                               >
                               <span class="tx-price">{{ formatCurrency(tx.totalPrice) }}</span>
+                              <button 
+                                v-if="canDeleteTransaction(tx)"
+                                class="tx-delete-btn" 
+                                @click.stop="deleteMaterialTransaction(tx.id)"
+                                title="លុបប្រតិបត្តិការ"
+                              >
+                                <i class="fas fa-trash-alt"></i>
+                              </button>
+                              <span v-else class="tx-in-use-badge" title="ប្រតិបត្តិការនេះត្រូវបានប្រើរួចហើយ មិនអាចលុបបានទេ">
+                                <i class="fas fa-lock"></i>
+                              </span>
                             </div>
                           </div>
                         </div>
@@ -1189,8 +1250,22 @@ async function handleMaterialSave(data) {
 }
 
 .tx-scroll {
-  max-height: 120px;
+  max-height: 160px;
   overflow-y: auto;
+  padding-right: 4px;
+}
+
+.tx-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.tx-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.tx-scroll::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
 }
 
 .tx-item {
@@ -1201,6 +1276,40 @@ async function handleMaterialSave(data) {
   font-size: 0.8rem;
   border-bottom: 1px dashed #f1f5f9;
   gap: 8px;
+}
+
+.tx-item:hover .tx-delete-btn {
+  opacity: 1;
+}
+
+.tx-delete-btn {
+  opacity: 0;
+  background: none;
+  border: none;
+  color: #ef4444;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  transition: all 0.2s;
+}
+
+.tx-delete-btn:hover {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.tx-in-use-badge {
+  color: #94a3b8;
+  font-size: 0.75rem;
+  padding: 4px 6px;
+  cursor: not-allowed;
+}
+
+.tx-count {
+  font-size: 0.7rem;
+  color: #94a3b8;
+  font-weight: 500;
 }
 
 .tx-date {

@@ -20,12 +20,19 @@ const ALLOWED_MATERIALS = [
   'ថង់វេចខ្ចប់',
   'ប្រអប់',
   'Leafleap',
+  'ស្ទីកគ័រ',
   'ទាបបារាំង',
   'ពលកម្ម'
 ]
 
 // Materials that use sizes (S, M, L)
-const SIZED_MATERIALS = ['ថង់', 'ថង់វេចខ្ចប់', 'ប្រអប់', 'Leafleap']
+const SIZED_MATERIALS = ['ថង់', 'ថង់វេចខ្ចប់', 'ប្រអប់', 'Leafleap', 'ស្ទីកគ័រ']
+
+// Materials that don't have size L (ប្រអប់ and Leafleap not used for L)
+const NO_SIZE_L_MATERIALS = ['ប្រអប់', 'Leafleap']
+
+// Materials that only have M and L (no S) - ស្ទីកគ័រ
+const ONLY_ML_MATERIALS = ['ស្ទីកគ័រ']
 
 // Labor - price-only, unlimited use
 const LABOR_MATERIALS = ['ពលកម្ម']
@@ -197,6 +204,10 @@ export const useStockStore = defineStore('stock', () => {
     // Use last price (តម្លៃចុងក្រោយ) for accurate current cost
     const PRODUCTION_MATERIALS = SIZED_MATERIALS.filter(m => m !== 'ថង់')
     PRODUCTION_MATERIALS.forEach(matName => {
+      // Skip materials that don't have size L
+      if (size === 'L' && NO_SIZE_L_MATERIALS.includes(matName)) return
+      // Skip materials that only have M and L (no S)
+      if (size === 'S' && ONLY_ML_MATERIALS.includes(matName)) return
       totalCost += getLastMaterialPrice(matName, size)
     })
 
@@ -268,6 +279,10 @@ export const useStockStore = defineStore('stock', () => {
         // Deduct production materials (exclude ថង់ - only deducted via orders)
         const PRODUCTION_MATERIALS = SIZED_MATERIALS.filter(m => m !== 'ថង់')
         for (const matName of PRODUCTION_MATERIALS) {
+          // Skip materials that don't have size L
+          if (size === 'L' && NO_SIZE_L_MATERIALS.includes(matName)) continue
+          // Skip materials that only have M and L (no S)
+          if (size === 'S' && ONLY_ML_MATERIALS.includes(matName)) continue
           await materialStockOut({
             materialName: matName,
             size: size,
@@ -345,6 +360,10 @@ export const useStockStore = defineStore('stock', () => {
         // Return production materials (exclude ថង់ - only deducted via orders)
         const PRODUCTION_MATERIALS = SIZED_MATERIALS.filter(m => m !== 'ថង់')
         for (const matName of PRODUCTION_MATERIALS) {
+          // Skip materials that don't have size L
+          if (size === 'L' && NO_SIZE_L_MATERIALS.includes(matName)) continue
+          // Skip materials that only have M and L (no S)
+          if (size === 'S' && ONLY_ML_MATERIALS.includes(matName)) continue
           await materialStockIn({
             materialName: matName,
             size: size,
@@ -539,18 +558,21 @@ export const useStockStore = defineStore('stock', () => {
           notes: updatedNotes
         })
 
-        materialTransactions.value[txIndex] = {
+        // Use splice for proper Vue reactivity
+        materialTransactions.value.splice(txIndex, 1, {
           ...targetTx,
           quantity: 0,
           notes: updatedNotes,
           updatedAt: new Date()
-        }
+        })
+
         return materialTransactions.value[txIndex]
       } catch (error) {
         console.error(`Failed to update plastic bag ${size} returns inside D1:`, error)
       }
     }
 
+    // Fallback: if original transaction not found, create a return 'in' transaction
     return materialStockIn({
       materialName: 'ថង់',
       size: size,
@@ -581,18 +603,21 @@ export const useStockStore = defineStore('stock', () => {
           notes: updatedNotes
         })
 
-        materialTransactions.value[txIndex] = {
+        // Use splice for proper Vue reactivity
+        materialTransactions.value.splice(txIndex, 1, {
           ...targetTx,
           quantity: 0,
           notes: updatedNotes,
           updatedAt: new Date()
-        }
+        })
+
         return materialTransactions.value[txIndex]
       } catch (error) {
         console.error('Failed to update case box returns inside D1:', error)
       }
     }
 
+    // Fallback: if original transaction not found, create a return 'in' transaction
     return materialStockIn({
       materialName: 'កេស',
       size: 'N/A',
@@ -617,6 +642,25 @@ export const useStockStore = defineStore('stock', () => {
 
   async function deleteMaterialTransaction(id) {
     try {
+      // Find the transaction to check if it's an 'in' transaction
+      const txToDelete = materialTransactions.value.find(tx => tx.id === id)
+      if (!txToDelete) {
+        throw new Error(`Transaction ${id} not found`)
+      }
+
+      // If it's an 'in' transaction, check if the material is in use (has 'out' transactions)
+      if (txToDelete.type === 'in') {
+        const hasOutTransactions = materialTransactions.value.some(tx =>
+          tx.type === 'out' &&
+          tx.materialName === txToDelete.materialName &&
+          tx.size === txToDelete.size
+        )
+
+        if (hasOutTransactions) {
+          throw new Error('MATERIAL_IN_USE')
+        }
+      }
+
       await api.delete(`/material-transactions/${id}`)
       materialTransactions.value = materialTransactions.value.filter(tx => tx.id !== id)
     } catch (error) {
@@ -669,6 +713,8 @@ export const useStockStore = defineStore('stock', () => {
     ALLOWED_PRODUCTS,
     ALLOWED_MATERIALS,
     SIZED_MATERIALS,
+    NO_SIZE_L_MATERIALS,
+    ONLY_ML_MATERIALS,
     KG_MATERIALS,
     NOSIZE_MATERIALS,
     LABOR_MATERIALS,

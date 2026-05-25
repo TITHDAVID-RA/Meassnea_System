@@ -108,8 +108,10 @@ function submit() {
               </select>
               <small v-if="autoCostPrice > 0" class="cost-hint">
                 <i class="fas fa-calculator"></i>
-                តម្លៃវត្ថុធាតុដើមសរុប: {{ autoCostPrice.toFixed(2) }} $ (ថង់វេចខ្ចប់ + ប្រអប់ + Leafleap +
-                តែ + ពលកម្ម)
+                តម្លៃវត្ថុធាតុដើមសរុប: {{ autoCostPrice.toFixed(2) }} $ 
+                <template v-if="stockStore.getSizeFromProductName(name) === 'S'">(ថង់វេចខ្ចប់ + ប្រអប់ + Leafleap + តែ + ពលកម្ម)</template>
+                <template v-else-if="stockStore.getSizeFromProductName(name) === 'M'">(ថង់វេចខ្ចប់ + ប្រអប់ + Leafleap + ស្ទីកគ័រ + តែ + ពលកម្ម)</template>
+                <template v-else-if="stockStore.getSizeFromProductName(name) === 'L'">(ថង់វេចខ្ចប់ + ស្ទីកគ័រ + តែ + ពលកម្ម)</template>
               </small>
             </div>
 

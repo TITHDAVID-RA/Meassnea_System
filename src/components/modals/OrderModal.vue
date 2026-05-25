@@ -98,7 +98,7 @@ async function save() {
       size: bag.size,
       qty: Number(bag.qty || 0)
     })).filter(bag => bag.qty > 0),
-    plasticBagCost: Number(plasticBagCost.toFixed(2)),
+    plasticBagCost: Number(plasticBagCost.toFixed(4)),
     caseBoxQty: Number(form.value.caseBoxQty || 0),
     deliveryCost: Number(form.value.deliveryCost || 0),
     date: form.value.date,
@@ -110,7 +110,7 @@ async function save() {
         quantity: Number(item.quantity || 1),
         unitPrice: Number(item.unitPrice || 0),
         costPrice: Number(product?.costPrice || 0),
-        total: Number((item.quantity * item.unitPrice).toFixed(2))
+        total: Number((item.quantity * item.unitPrice).toFixed(4))
       }
     }), 
     total: Number(total.value)
@@ -236,7 +236,7 @@ async function save() {
               </div>
               <div class="form-group">
                 <label>ថ្លៃដឹកជញ្ជូន (Delivery $)</label>
-                <input type="number" v-model.number="form.deliveryCost" min="0" step="0.01" class="form-input">
+                <input type="number" v-model.number="form.deliveryCost" min="0" step="0.0001" class="form-input">
               </div>
             </div>
 

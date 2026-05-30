@@ -649,34 +649,8 @@ export const useStockStore = defineStore('stock', () => {
       }
 
       // If it's an 'in' transaction, check if THIS SPECIFIC transaction is in use
-      // Using FIFO logic: calculate if this transaction's quantity has been consumed
       if (txToDelete.type === 'in') {
-        // Get all 'in' transactions for this material+size, sorted by date (oldest first)
-        const inTransactions = materialTransactions.value
-          .filter(tx => tx.type === 'in' && tx.materialName === txToDelete.materialName && tx.size === txToDelete.size)
-          .sort((a, b) => new Date(a.date) - new Date(b.date))
-
-        // Get all 'out' transactions for this material+size
-        const outTransactions = materialTransactions.value
-          .filter(tx => tx.type === 'out' && tx.materialName === txToDelete.materialName && tx.size === txToDelete.size)
-
-        // Calculate total out quantity
-        const totalOut = outTransactions.reduce((sum, tx) => sum + tx.quantity, 0)
-
-        // Calculate cumulative in quantities to find where this transaction sits
-        let cumulativeIn = 0
-        let consumedQuantity = 0
-
-        for (const tx of inTransactions) {
-          cumulativeIn += tx.quantity
-          if (tx.id === txToDelete.id) {
-            // This transaction starts at (cumulativeIn - tx.quantity) and ends at cumulativeIn
-            // If totalOut > (cumulativeIn - tx.quantity), part or all of this tx is consumed
-            const txStart = cumulativeIn - tx.quantity
-            consumedQuantity = Math.max(0, Math.min(tx.quantity, totalOut - txStart))
-            break
-          }
-        }
+        const consumedQuantity = getConsumedQuantity(txToDelete)
 
         // If any part of this transaction has been consumed, block deletion
         if (consumedQuantity > 0) {
@@ -692,6 +666,62 @@ export const useStockStore = defineStore('stock', () => {
     }
   }
 
+  /**
+   * Check if a material transaction can be deleted using FIFO logic.
+   * Returns true if the transaction can be safely deleted.
+   */
+  function canDeleteMaterialTransaction(tx) {
+    // Only 'in' transactions can potentially be blocked
+    if (tx.type !== 'in') return true
+
+    const consumedQuantity = getConsumedQuantity(tx)
+
+    // Can delete if none of this transaction has been consumed
+    return consumedQuantity === 0
+  }
+
+  /**
+   * Calculate how much of a given 'in' transaction has been consumed by 'out' transactions.
+   * Uses stable FIFO ordering (by date, then by createdAt as tiebreaker).
+   */
+  function getConsumedQuantity(tx) {
+    // Get all 'in' transactions for this material+size, sorted by date (oldest first)
+    // Use stable sort: date first, then createdAt as tiebreaker to ensure consistent ordering
+    const inTransactions = materialTransactions.value
+      .filter(t => t.type === 'in' && t.materialName === tx.materialName && t.size === tx.size)
+      .sort((a, b) => {
+        const dateDiff = new Date(a.date) - new Date(b.date)
+        if (dateDiff !== 0) return dateDiff
+        // Stable tiebreaker: use createdAt, then id
+        const createdDiff = new Date(a.createdAt || 0) - new Date(b.createdAt || 0)
+        if (createdDiff !== 0) return createdDiff
+        return (a.id || '').localeCompare(b.id || '')
+      })
+
+    // Get all 'out' transactions for this material+size
+    const outTransactions = materialTransactions.value
+      .filter(t => t.type === 'out' && t.materialName === tx.materialName && t.size === tx.size)
+
+    // Calculate total out quantity
+    const totalOut = outTransactions.reduce((sum, t) => sum + t.quantity, 0)
+
+    // Calculate cumulative in quantities to find where this transaction sits
+    let cumulativeIn = 0
+    let consumedQuantity = 0
+
+    for (const t of inTransactions) {
+      cumulativeIn += t.quantity
+      if (t.id === tx.id) {
+        // This transaction starts at (cumulativeIn - t.quantity) and ends at cumulativeIn
+        // If totalOut > (cumulativeIn - t.quantity), part or all of this tx is consumed
+        const txStart = cumulativeIn - t.quantity
+        consumedQuantity = Math.max(0, Math.min(t.quantity, totalOut - txStart))
+        break
+      }
+    }
+
+    return consumedQuantity
+  }
   function getMaterialTransactions(materialName, size) {
     return materialTransactions.value
       .filter(tx => tx.materialName === materialName && tx.size === size)
@@ -726,6 +756,7 @@ export const useStockStore = defineStore('stock', () => {
     returnCaseBox,
     deductMaterialsBySize,
     deleteMaterialTransaction,
+    canDeleteMaterialTransaction,
     getMaterialTransactions,
     getMaterialCostPerUnit,
     getMaterialUnitCost,

@@ -334,39 +334,9 @@ async function deleteMaterialTransaction(id) {
 }
 
 // Check if a material transaction can be deleted using FIFO logic
+// Delegates to the store's shared helper for consistency
 function canDeleteTransaction(tx) {
-  // Only 'in' transactions can potentially be blocked
-  if (tx.type !== 'in') return true
-
-  // Get all 'in' transactions for this material+size, sorted by date (oldest first)
-  const inTransactions = stockStore.materialTransactions
-    .filter(t => t.type === 'in' && t.materialName === tx.materialName && t.size === tx.size)
-    .sort((a, b) => new Date(a.date) - new Date(b.date))
-
-  // Get all 'out' transactions for this material+size
-  const outTransactions = stockStore.materialTransactions
-    .filter(t => t.type === 'out' && t.materialName === tx.materialName && t.size === tx.size)
-
-  // Calculate total out quantity
-  const totalOut = outTransactions.reduce((sum, t) => sum + t.quantity, 0)
-
-  // Calculate cumulative in quantities to find where this transaction sits
-  let cumulativeIn = 0
-  let consumedQuantity = 0
-
-  for (const t of inTransactions) {
-    cumulativeIn += t.quantity
-    if (t.id === tx.id) {
-      // This transaction starts at (cumulativeIn - t.quantity) and ends at cumulativeIn
-      // If totalOut > (cumulativeIn - t.quantity), part or all of this tx is consumed
-      const txStart = cumulativeIn - t.quantity
-      consumedQuantity = Math.max(0, Math.min(t.quantity, totalOut - txStart))
-      break
-    }
-  }
-
-  // Can delete if none of this transaction has been consumed
-  return consumedQuantity === 0
+  return stockStore.canDeleteMaterialTransaction(tx)
 }
 
 // Converted to async to wait for local D1 processing

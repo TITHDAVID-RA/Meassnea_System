@@ -648,15 +648,38 @@ export const useStockStore = defineStore('stock', () => {
         throw new Error(`Transaction ${id} not found`)
       }
 
-      // If it's an 'in' transaction, check if the material is in use (has 'out' transactions)
+      // If it's an 'in' transaction, check if THIS SPECIFIC transaction is in use
+      // Using FIFO logic: calculate if this transaction's quantity has been consumed
       if (txToDelete.type === 'in') {
-        const hasOutTransactions = materialTransactions.value.some(tx =>
-          tx.type === 'out' &&
-          tx.materialName === txToDelete.materialName &&
-          tx.size === txToDelete.size
-        )
+        // Get all 'in' transactions for this material+size, sorted by date (oldest first)
+        const inTransactions = materialTransactions.value
+          .filter(tx => tx.type === 'in' && tx.materialName === txToDelete.materialName && tx.size === txToDelete.size)
+          .sort((a, b) => new Date(a.date) - new Date(b.date))
 
-        if (hasOutTransactions) {
+        // Get all 'out' transactions for this material+size
+        const outTransactions = materialTransactions.value
+          .filter(tx => tx.type === 'out' && tx.materialName === txToDelete.materialName && tx.size === txToDelete.size)
+
+        // Calculate total out quantity
+        const totalOut = outTransactions.reduce((sum, tx) => sum + tx.quantity, 0)
+
+        // Calculate cumulative in quantities to find where this transaction sits
+        let cumulativeIn = 0
+        let consumedQuantity = 0
+
+        for (const tx of inTransactions) {
+          cumulativeIn += tx.quantity
+          if (tx.id === txToDelete.id) {
+            // This transaction starts at (cumulativeIn - tx.quantity) and ends at cumulativeIn
+            // If totalOut > (cumulativeIn - tx.quantity), part or all of this tx is consumed
+            const txStart = cumulativeIn - tx.quantity
+            consumedQuantity = Math.max(0, Math.min(tx.quantity, totalOut - txStart))
+            break
+          }
+        }
+
+        // If any part of this transaction has been consumed, block deletion
+        if (consumedQuantity > 0) {
           throw new Error('MATERIAL_IN_USE')
         }
       }

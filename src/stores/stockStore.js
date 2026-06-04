@@ -222,11 +222,74 @@ export const useStockStore = defineStore('stock', () => {
     return totalCost
   }
 
+
+  /**
+   * Check if there are enough materials to produce a given product
+   * Returns { sufficient: true/false, shortages: [] }
+   */
+  function checkMaterialAvailability(productName, qty) {
+    const size = getSizeFromProductName(productName)
+    const shortages = []
+
+    if (productName === 'ទាបបារាំង') {
+      const balance = getMaterialBalance('ទាបបារាំង', 'N/A')
+      if (balance < qty) {
+        shortages.push({ material: 'ទាបបារាំង', size: 'N/A', needed: qty, available: balance })
+      }
+    } else if (size && ['S', 'M', 'L'].includes(size) && qty > 0) {
+      // Check production materials (exclude ថង់ - only deducted via orders)
+      const PRODUCTION_MATERIALS = SIZED_MATERIALS.filter(m => m !== 'ថង់')
+      for (const matName of PRODUCTION_MATERIALS) {
+        if (size === 'L' && NO_SIZE_L_MATERIALS.includes(matName)) continue
+        if (size === 'S' && ONLY_ML_MATERIALS.includes(matName)) continue
+        const balance = getMaterialBalance(matName, size)
+        if (balance < qty) {
+          shortages.push({ material: matName, size, needed: qty, available: balance })
+        }
+      }
+
+      // Check tea grams
+      const teaGrams = (TEA_GRAMS_PER_SIZE[size] || 0) * qty
+      if (teaGrams > 0) {
+        const teaBalance = getMaterialBalance('តែ', size)
+        if (teaBalance < teaGrams) {
+          shortages.push({ material: 'តែ', size, needed: teaGrams, available: teaBalance, unit: 'g' })
+        }
+      }
+    }
+
+    return { sufficient: shortages.length === 0, shortages }
+  }
+
+  /**
+   * Get current material balance for a specific material+size
+   */
+  function getMaterialBalance(materialName, size) {
+    let totalIn = 0
+    let totalOut = 0
+    materialTransactions.value.forEach(tx => {
+      if (tx.materialName === materialName && tx.size === size) {
+        if (tx.type === 'in') totalIn += tx.quantity
+        else if (tx.type === 'out') totalOut += tx.quantity
+      }
+    })
+    return totalIn - totalOut
+  }
+
   // --- Product Functions ---
   async function addProduct(productData) {
     try {
       const size = getSizeFromProductName(productData.name)
       const qty = Number(productData.quantity) || 1
+
+      // Check material availability before creating
+      const { sufficient, shortages } = checkMaterialAvailability(productData.name, qty)
+      if (!sufficient) {
+        const shortageList = shortages.map(s => 
+          `- ${s.material}${s.size !== 'N/A' ? ' (' + s.size + ')' : ''}: ត្រូវការ ${s.needed}${s.unit || ''} មានតែ ${s.available}${s.unit || ''}`
+        ).join('\n')
+        throw new Error(`MATERIAL_SHORTAGE\n${shortageList}`)
+      }
 
       let calculatedCostPrice = productData.costPrice || 0
 
@@ -722,6 +785,36 @@ export const useStockStore = defineStore('stock', () => {
 
     return consumedQuantity
   }
+
+  async function updateMaterialTransaction(id, updates) {
+    try {
+      const payload = {}
+      if (updates.materialName !== undefined) payload.material_name = updates.materialName
+      if (updates.size !== undefined) payload.size = updates.size
+      if (updates.quantity !== undefined) payload.quantity = Number(updates.quantity)
+      if (updates.unitPrice !== undefined) payload.unit_price = Number(updates.unitPrice)
+      if (updates.totalPrice !== undefined) payload.total_price = Number(updates.totalPrice)
+      if (updates.notes !== undefined) payload.notes = updates.notes
+      if (updates.date !== undefined) payload.transaction_date = new Date(updates.date).toISOString()
+
+      await api.put(`/material-transactions/${id}`, payload)
+
+      const index = materialTransactions.value.findIndex(tx => tx.id === id)
+      if (index !== -1) {
+        materialTransactions.value[index] = {
+          ...materialTransactions.value[index],
+          ...updates,
+          updatedAt: new Date()
+        }
+        return materialTransactions.value[index]
+      }
+      return null
+    } catch (error) {
+      console.error(`Failed to update material transaction ${id} in D1:`, error)
+      throw error
+    }
+  }
+
   function getMaterialTransactions(materialName, size) {
     return materialTransactions.value
       .filter(tx => tx.materialName === materialName && tx.size === size)
@@ -756,8 +849,11 @@ export const useStockStore = defineStore('stock', () => {
     returnCaseBox,
     deductMaterialsBySize,
     deleteMaterialTransaction,
+    updateMaterialTransaction,
     canDeleteMaterialTransaction,
     getMaterialTransactions,
+    checkMaterialAvailability,
+    getMaterialBalance,
     getMaterialCostPerUnit,
     getMaterialUnitCost,
     getLastMaterialPrice,

@@ -5,6 +5,7 @@ import { useExpenseStore } from '@/stores/expenseStore'
 import { useFormatters } from '@/composables/useFormatters'
 import StockModal from '@/components/modals/StockModal.vue'
 import MaterialModal from '@/components/modals/MaterialModal.vue'
+import MaterialEditModal from '@/components/modals/MaterialEditModal.vue'
 import EmptyState from '@/components/EmptyState.vue'
 
 const stockStore = useStockStore()
@@ -20,6 +21,8 @@ const editingBatch = ref(null)
 
 // Material modal
 const showMaterialModal = ref(false)
+const showMaterialEditModal = ref(false)
+const editingMaterialTx = ref(null)
 
 // Material expand state - which material row is expanded
 const expandedMaterial = ref(null)
@@ -319,26 +322,6 @@ async function deleteBatch(id) {
   }
 }
 
-async function deleteMaterialTransaction(id) {
-  if (confirm('តើអ្នកពិតជាចង់លុបប្រតិបត្តិការនេះមែនទេ?')) {
-    try {
-      await stockStore.deleteMaterialTransaction(id)
-    } catch (error) {
-      if (error.message === 'MATERIAL_IN_USE') {
-        alert('មិនអាចលុបបានទេ! វត្ថុធាតុដើមនេះត្រូវបានប្រើរួចហើយ (មានប្រតិបត្តិការកាត់ចេញ)។')
-      } else {
-        alert('មានបញ្ហាក្នុងការលុបប្រតិបត្តិការ!')
-      }
-    }
-  }
-}
-
-// Check if a material transaction can be deleted using FIFO logic
-// Delegates to the store's shared helper for consistency
-function canDeleteTransaction(tx) {
-  return stockStore.canDeleteMaterialTransaction(tx)
-}
-
 // Converted to async to wait for local D1 processing
 async function handleProcessStock(data) {
   try {
@@ -348,7 +331,33 @@ async function handleProcessStock(data) {
       await stockStore.addProduct({ ...data, initialQuantity: data.quantity })
     }
   } catch (error) {
-    alert('មានបញ្ហាក្នុងការរក្សាទុកផលិតផល!')
+    if (error.message && error.message.startsWith('MATERIAL_SHORTAGE')) {
+      const shortages = error.message.replace('MATERIAL_SHORTAGE\n', '')
+      alert('មិនអាចបង្កើតផលិតផលបានទេ! វត្ថុធាតុដើមមិនគ្រប់គ្រាន់:\n' + shortages)
+    } else {
+      alert('មានបញ្ហាក្នុងការរក្សាទុកផលិតផល!')
+    }
+  }
+}
+
+function openEditMaterial(tx) {
+  editingMaterialTx.value = { ...tx }
+  showMaterialEditModal.value = true
+}
+
+async function handleMaterialEdit(data) {
+  try {
+    await stockStore.updateMaterialTransaction(data.id, {
+      materialName: data.materialName,
+      size: data.size,
+      quantity: data.quantity,
+      unitPrice: data.unitPrice,
+      totalPrice: data.totalPrice,
+      date: data.date,
+      notes: data.notes,
+    })
+  } catch (error) {
+    alert('មានបញ្ហាក្នុងការកែប្រែប្រតិបត្តិការ!')
   }
 }
 
@@ -730,16 +739,12 @@ async function handleMaterialSave(data) {
                               >
                               <span class="tx-price">{{ formatCurrency(tx.totalPrice) }}</span>
                               <button 
-                                v-if="canDeleteTransaction(tx)"
-                                class="tx-delete-btn" 
-                                @click.stop="deleteMaterialTransaction(tx.id)"
-                                title="លុបប្រតិបត្តិការ"
+                                class="tx-edit-btn" 
+                                @click.stop="openEditMaterial(tx)"
+                                title="កែប្រែប្រតិបត្តិការ"
                               >
-                                <i class="fas fa-trash-alt"></i>
+                                <i class="fas fa-edit"></i>
                               </button>
-                              <span v-else class="tx-in-use-badge" title="ប្រតិបត្តិការនេះត្រូវបានប្រើរួចហើយ មិនអាចលុបបានទេ">
-                                <i class="fas fa-lock"></i>
-                              </span>
                             </div>
                           </div>
                         </div>
@@ -757,6 +762,7 @@ async function handleMaterialSave(data) {
 
     <StockModal v-model="showStockModal" :edit-data="editingBatch" @process="handleProcessStock" />
     <MaterialModal v-model="showMaterialModal" @save="handleMaterialSave" />
+    <MaterialEditModal v-model="showMaterialEditModal" :edit-data="editingMaterialTx" @save="handleMaterialEdit" />
   </div>
 </template>
 
@@ -1271,15 +1277,15 @@ async function handleMaterialSave(data) {
   gap: 8px;
 }
 
-.tx-item:hover .tx-delete-btn {
+.tx-item:hover .tx-edit-btn {
   opacity: 1;
 }
 
-.tx-delete-btn {
+.tx-edit-btn {
   opacity: 0;
   background: none;
   border: none;
-  color: #ef4444;
+  color: #3b82f6;
   cursor: pointer;
   padding: 4px 6px;
   border-radius: 4px;
@@ -1287,16 +1293,9 @@ async function handleMaterialSave(data) {
   transition: all 0.2s;
 }
 
-.tx-delete-btn:hover {
-  background: #fef2f2;
-  color: #dc2626;
-}
-
-.tx-in-use-badge {
-  color: #94a3b8;
-  font-size: 0.75rem;
-  padding: 4px 6px;
-  cursor: not-allowed;
+.tx-edit-btn:hover {
+  background: #eff6ff;
+  color: #2563eb;
 }
 
 .tx-count {

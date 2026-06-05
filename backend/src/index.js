@@ -475,6 +475,8 @@ export default {
                 await returnPlasticBag(bag.size, Number(bag.qty || bag.quantity || 0), order.order_number);
               }
             }
+            // Delete associated income when order is cancelled
+            await db.prepare("DELETE FROM incomes WHERE order_id = ?").bind(id).run();
           }
 
           await db.prepare(`
@@ -493,6 +495,9 @@ export default {
             }
           }
 
+          // Cascade delete: remove order_items, income, and the order itself
+          await db.prepare("DELETE FROM order_items WHERE order_id = ?").bind(id).run();
+          await db.prepare("DELETE FROM incomes WHERE order_id = ?").bind(id).run();
           await db.prepare("DELETE FROM orders WHERE id = ?").bind(id).run();
           return jsonResponse({ success: true });
         }
@@ -524,6 +529,96 @@ export default {
           `).bind(id, order_id, amount, category, payment_method, description, customer, reference, income_date).run();
 
           return jsonResponse({ success: true, id }, 201);
+        }
+      }
+
+      if (path.startsWith("/api/incomes/")) {
+        const id = path.split("/").pop();
+
+        if (method === "GET") {
+          const income = await db.prepare("SELECT * FROM incomes WHERE id = ?").bind(id).first();
+          return jsonResponse(income || { error: "Income not found" }, income ? 200 : 404);
+        }
+
+        if (method === "PUT") {
+          const body = await request.json();
+          const existing = await db.prepare("SELECT * FROM incomes WHERE id = ?").bind(id).first();
+          if (!existing) return jsonResponse({ error: "Income not found" }, 404);
+
+          const order_id = getVal(body, 'orderId', 'order_id', existing.order_id);
+          const amount = getNum(body, 'amount', 'amount', existing.amount);
+          const category = getVal(body, 'category', 'category', existing.category);
+          const payment_method = getVal(body, 'paymentMethod', 'payment_method', existing.payment_method);
+          const description = getVal(body, 'description', 'description', existing.description);
+          const customer = getVal(body, 'customer', 'customer', existing.customer);
+          const reference = getVal(body, 'reference', 'reference', existing.reference);
+          const income_date = getVal(body, 'date', 'income_date', existing.income_date);
+
+          await db.prepare(`
+            UPDATE incomes 
+            SET order_id = ?, amount = ?, category = ?, payment_method = ?, description = ?, customer = ?, reference = ?, income_date = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `).bind(order_id, amount, category, payment_method, description, customer, reference, income_date, id).run();
+
+          return jsonResponse({ success: true });
+        }
+
+        if (method === "PATCH") {
+          const body = await request.json();
+          const existing = await db.prepare("SELECT * FROM incomes WHERE id = ?").bind(id).first();
+          if (!existing) return jsonResponse({ error: "Income not found" }, 404);
+
+          const updates = [];
+          const params = [];
+
+          if (body.order_id !== undefined || body.orderId !== undefined) {
+            updates.push('order_id = ?');
+            params.push(getVal(body, 'orderId', 'order_id', existing.order_id));
+          }
+          if (body.amount !== undefined) {
+            updates.push('amount = ?');
+            params.push(getNum(body, 'amount', 'amount', existing.amount));
+          }
+          if (body.category !== undefined) {
+            updates.push('category = ?');
+            params.push(getVal(body, 'category', 'category', existing.category));
+          }
+          if (body.payment_method !== undefined || body.paymentMethod !== undefined) {
+            updates.push('payment_method = ?');
+            params.push(getVal(body, 'paymentMethod', 'payment_method', existing.payment_method));
+          }
+          if (body.description !== undefined) {
+            updates.push('description = ?');
+            params.push(getVal(body, 'description', 'description', existing.description));
+          }
+          if (body.customer !== undefined) {
+            updates.push('customer = ?');
+            params.push(getVal(body, 'customer', 'customer', existing.customer));
+          }
+          if (body.reference !== undefined) {
+            updates.push('reference = ?');
+            params.push(getVal(body, 'reference', 'reference', existing.reference));
+          }
+          if (body.income_date !== undefined || body.date !== undefined) {
+            updates.push('income_date = ?');
+            params.push(getVal(body, 'date', 'income_date', existing.income_date));
+          }
+
+          params.push(id);
+
+          if (updates.length === 0) {
+            return jsonResponse({ error: 'No fields to update' }, 400);
+          }
+
+          const query = `UPDATE incomes SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
+          await db.prepare(query).bind(...params).run();
+
+          return jsonResponse({ success: true });
+        }
+
+        if (method === "DELETE") {
+          await db.prepare("DELETE FROM incomes WHERE id = ?").bind(id).run();
+          return jsonResponse({ success: true });
         }
       }
 

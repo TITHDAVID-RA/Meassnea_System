@@ -399,6 +399,7 @@ var src_default = {
                 await returnPlasticBag(bag.size, Number(bag.qty || bag.quantity || 0), order.order_number);
               }
             }
+            await db.prepare("DELETE FROM incomes WHERE order_id = ?").bind(id).run();
           }
           await db.prepare(`
             UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
@@ -413,6 +414,8 @@ var src_default = {
               await returnPlasticBag(bag.size, Number(bag.qty || bag.quantity || 0), order.order_number);
             }
           }
+          await db.prepare("DELETE FROM order_items WHERE order_id = ?").bind(id).run();
+          await db.prepare("DELETE FROM incomes WHERE order_id = ?").bind(id).run();
           await db.prepare("DELETE FROM orders WHERE id = ?").bind(id).run();
           return jsonResponse({ success: true });
         }
@@ -438,6 +441,82 @@ var src_default = {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).bind(id, order_id, amount, category, payment_method, description, customer, reference, income_date).run();
           return jsonResponse({ success: true, id }, 201);
+        }
+      }
+      if (path.startsWith("/api/incomes/")) {
+        const id = path.split("/").pop();
+        if (method === "GET") {
+          const income = await db.prepare("SELECT * FROM incomes WHERE id = ?").bind(id).first();
+          return jsonResponse(income || { error: "Income not found" }, income ? 200 : 404);
+        }
+        if (method === "PUT") {
+          const body = await request.json();
+          const existing = await db.prepare("SELECT * FROM incomes WHERE id = ?").bind(id).first();
+          if (!existing) return jsonResponse({ error: "Income not found" }, 404);
+          const order_id = getVal(body, "orderId", "order_id", existing.order_id);
+          const amount = getNum(body, "amount", "amount", existing.amount);
+          const category = getVal(body, "category", "category", existing.category);
+          const payment_method = getVal(body, "paymentMethod", "payment_method", existing.payment_method);
+          const description = getVal(body, "description", "description", existing.description);
+          const customer = getVal(body, "customer", "customer", existing.customer);
+          const reference = getVal(body, "reference", "reference", existing.reference);
+          const income_date = getVal(body, "date", "income_date", existing.income_date);
+          await db.prepare(`
+            UPDATE incomes 
+            SET order_id = ?, amount = ?, category = ?, payment_method = ?, description = ?, customer = ?, reference = ?, income_date = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `).bind(order_id, amount, category, payment_method, description, customer, reference, income_date, id).run();
+          return jsonResponse({ success: true });
+        }
+        if (method === "PATCH") {
+          const body = await request.json();
+          const existing = await db.prepare("SELECT * FROM incomes WHERE id = ?").bind(id).first();
+          if (!existing) return jsonResponse({ error: "Income not found" }, 404);
+          const updates = [];
+          const params = [];
+          if (body.order_id !== void 0 || body.orderId !== void 0) {
+            updates.push("order_id = ?");
+            params.push(getVal(body, "orderId", "order_id", existing.order_id));
+          }
+          if (body.amount !== void 0) {
+            updates.push("amount = ?");
+            params.push(getNum(body, "amount", "amount", existing.amount));
+          }
+          if (body.category !== void 0) {
+            updates.push("category = ?");
+            params.push(getVal(body, "category", "category", existing.category));
+          }
+          if (body.payment_method !== void 0 || body.paymentMethod !== void 0) {
+            updates.push("payment_method = ?");
+            params.push(getVal(body, "paymentMethod", "payment_method", existing.payment_method));
+          }
+          if (body.description !== void 0) {
+            updates.push("description = ?");
+            params.push(getVal(body, "description", "description", existing.description));
+          }
+          if (body.customer !== void 0) {
+            updates.push("customer = ?");
+            params.push(getVal(body, "customer", "customer", existing.customer));
+          }
+          if (body.reference !== void 0) {
+            updates.push("reference = ?");
+            params.push(getVal(body, "reference", "reference", existing.reference));
+          }
+          if (body.income_date !== void 0 || body.date !== void 0) {
+            updates.push("income_date = ?");
+            params.push(getVal(body, "date", "income_date", existing.income_date));
+          }
+          params.push(id);
+          if (updates.length === 0) {
+            return jsonResponse({ error: "No fields to update" }, 400);
+          }
+          const query = `UPDATE incomes SET ${updates.join(", ")}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
+          await db.prepare(query).bind(...params).run();
+          return jsonResponse({ success: true });
+        }
+        if (method === "DELETE") {
+          await db.prepare("DELETE FROM incomes WHERE id = ?").bind(id).run();
+          return jsonResponse({ success: true });
         }
       }
       if (path === "/api/expenses") {
@@ -633,7 +712,7 @@ var jsonError = /* @__PURE__ */ __name(async (request, env, _ctx, middlewareCtx)
 }, "jsonError");
 var middleware_miniflare3_json_error_default = jsonError;
 
-// .wrangler/tmp/bundle-LnutnW/middleware-insertion-facade.js
+// .wrangler/tmp/bundle-IATvl5/middleware-insertion-facade.js
 var __INTERNAL_WRANGLER_MIDDLEWARE__ = [
   middleware_ensure_req_body_drained_default,
   middleware_miniflare3_json_error_default
@@ -665,7 +744,7 @@ function __facade_invoke__(request, env, ctx, dispatch, finalMiddleware) {
 }
 __name(__facade_invoke__, "__facade_invoke__");
 
-// .wrangler/tmp/bundle-LnutnW/middleware-loader.entry.ts
+// .wrangler/tmp/bundle-IATvl5/middleware-loader.entry.ts
 var __Facade_ScheduledController__ = class ___Facade_ScheduledController__ {
   constructor(scheduledTime, cron, noRetry) {
     this.scheduledTime = scheduledTime;

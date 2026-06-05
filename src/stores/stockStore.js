@@ -150,6 +150,7 @@ export const useStockStore = defineStore('stock', () => {
         type: tx.type,
         date: tx.transaction_date ? new Date(tx.transaction_date) : new Date(tx.created_at),
         notes: tx.notes || '',
+        hidden: tx.hidden || false,
         createdAt: tx.created_at ? new Date(tx.created_at) : new Date()
       }))
     } catch (error) {
@@ -251,16 +252,21 @@ export const useStockStore = defineStore('stock', () => {
       // Check tea grams - តែ is derived from ទាបបារាំង (1kg = 150g តែ)
       const teaGramsNeeded = (TEA_GRAMS_PER_SIZE[size] || 0) * qty
       if (teaGramsNeeded > 0) {
-        // Calculate derived tea balance: (ទាបបារាំង kg * 150) - total តែ out transactions in grams
+        // Calculate derived tea balance: (ទាបបារាំង kg * 150) - total តែ out + total តែ in (returns)
         const teaPowderBalanceKg = getMaterialBalance('ទាបបារាំង', 'N/A')
-        const teaGramsAvailable = teaPowderBalanceKg * TEA_POWDER_TO_TEA_GRAMS
+        const teaGramsFromPowder = teaPowderBalanceKg * TEA_POWDER_TO_TEA_GRAMS
 
-        // Subtract total តែ out transactions for this size
+        // Total តែ out transactions for this size
         const teaOutTotal = materialTransactions.value
           .filter(tx => tx.type === 'out' && tx.materialName === 'តែ' && tx.size === size)
           .reduce((sum, tx) => sum + tx.quantity, 0)
 
-        const teaBalance = teaGramsAvailable - teaOutTotal
+        // Total តែ in transactions for this size (returns from product deletion)
+        const teaInTotal = materialTransactions.value
+          .filter(tx => tx.type === 'in' && tx.materialName === 'តែ' && tx.size === size)
+          .reduce((sum, tx) => sum + tx.quantity, 0)
+
+        const teaBalance = teaGramsFromPowder - teaOutTotal + teaInTotal
 
         if (teaBalance < teaGramsNeeded) {
           shortages.push({
@@ -290,6 +296,47 @@ export const useStockStore = defineStore('stock', () => {
       }
     })
     return totalIn - totalOut
+  }
+
+  /**
+   * Reverse a material out transaction by finding and zeroing it.
+   * This reduces totalOut instead of inflating totalIn.
+   */
+  async function reverseMaterialOut(materialName, size, productName, qty) {
+    // Find matching out transactions for this material + product
+    const txIndices = []
+    materialTransactions.value.forEach((tx, index) => {
+      if (tx.type === 'out' && 
+          tx.materialName === materialName && 
+          tx.size === size &&
+          tx.quantity > 0 &&
+          tx.notes && tx.notes.includes(productName)) {
+        txIndices.push(index)
+      }
+    })
+
+    // Reverse each matching transaction (set quantity to 0, update notes)
+    for (const txIndex of txIndices) {
+      const targetTx = materialTransactions.value[txIndex]
+      const updatedNotes = targetTx.notes + ' (ត្រឡប់វិញពីការលុបផលិតផល)'
+
+      try {
+        await api.put(`/material-transactions/${targetTx.id}`, {
+          quantity: 0,
+          notes: updatedNotes
+        })
+
+        // Use splice for proper Vue reactivity
+        materialTransactions.value.splice(txIndex, 1, {
+          ...targetTx,
+          quantity: 0,
+          notes: updatedNotes,
+          updatedAt: new Date()
+        })
+      } catch (error) {
+        console.error(`Failed to reverse material out ${materialName} ${size}:`, error)
+      }
+    }
   }
 
   // --- Product Functions ---
@@ -425,43 +472,23 @@ export const useStockStore = defineStore('stock', () => {
       const size = getSizeFromProductName(product.name)
       const qty = product.quantity
 
-      // Return materials back to stock before deleting the product
+      // Reverse material out transactions (reduce totalOut, not inflate totalIn)
       if (product.name === 'ទាបបារាំង' && qty > 0) {
-        // Return ទាបបារាំង kg
-        await materialStockIn({
-          materialName: 'ទាបបារាំង',
-          size: 'N/A',
-          quantity: qty,
-          unitPrice: 0,
-          notes: `បានលុបផលិតផល - ត្រឡប់វត្ថុធាតុដើម: ${product.name} x${qty}`
-        })
+        // Reverse ទាបបារាំង out transaction
+        await reverseMaterialOut('ទាបបារាំង', 'N/A', product.name, qty)
       } else if (size && ['S', 'M', 'L'].includes(size) && qty > 0) {
-        // Return production materials (exclude ថង់ - only deducted via orders)
+        // Reverse production material out transactions
         const PRODUCTION_MATERIALS = SIZED_MATERIALS.filter(m => m !== 'ថង់')
         for (const matName of PRODUCTION_MATERIALS) {
-          // Skip materials that don't have size L
           if (size === 'L' && NO_SIZE_L_MATERIALS.includes(matName)) continue
-          // Skip materials that only have M and L (no S)
           if (size === 'S' && ONLY_ML_MATERIALS.includes(matName)) continue
-          await materialStockIn({
-            materialName: matName,
-            size: size,
-            quantity: qty,
-            unitPrice: 0,
-            notes: `បានលុបផលិតផល - ត្រឡប់វត្ថុធាតុដើម: ${product.name} x${qty}`
-          })
+          await reverseMaterialOut(matName, size, product.name, qty)
         }
 
-        // Return tea grams
+        // Reverse tea out transaction
         const teaGrams = (TEA_GRAMS_PER_SIZE[size] || 0) * qty
         if (teaGrams > 0) {
-          await materialStockIn({
-            materialName: 'តែ',
-            size: size,
-            quantity: teaGrams,
-            unitPrice: 0,
-            notes: `បានលុបផលិតផល - ត្រឡប់វត្ថុធាតុដើម: ${product.name} x${qty} (${teaGrams}g តែ)`
-          })
+          await reverseMaterialOut('តែ', size, product.name, teaGrams)
         }
       }
 
@@ -518,7 +545,8 @@ export const useStockStore = defineStore('stock', () => {
       unit_price: Number(data.unitPrice || 0),
       total_price: Number(data.unitPrice || 0) * Number(data.quantity),
       type: 'in',
-      notes: data.notes || ''
+      notes: data.notes || '',
+      hidden: data.hidden || false
     }
 
     try {
@@ -534,6 +562,7 @@ export const useStockStore = defineStore('stock', () => {
         type: 'in',
         date: now,
         notes: data.notes || '',
+        hidden: data.hidden || false,
         createdAt: new Date()
       }
       materialTransactions.value.push(transaction)
@@ -659,7 +688,8 @@ export const useStockStore = defineStore('stock', () => {
       unitPrice: 0,
       totalPrice: 0,
       date: new Date(),
-      notes: orderNumber ? `បានបន្ថែមវិញពីការបោះបង់ការកម្មង់លេខ: ${orderNumber} (${size})` : `បានបន្ថែមវិញពីការបោះបង់ការកម្មង់ (${size})`
+      notes: orderNumber ? `បានបន្ថែមវិញពីការបោះបង់ការកម្មង់លេខ: ${orderNumber} (${size})` : `បានបន្ថែមវិញពីការបោះបង់ការកម្មង់ (${size})`,
+      hidden: true
     })
   }
 
@@ -704,7 +734,8 @@ export const useStockStore = defineStore('stock', () => {
       unitPrice: 0,
       totalPrice: 0,
       date: new Date(),
-      notes: orderNumber ? `បានបន្ថែមវិញពីការបោះបង់ការកម្មង់លេខ: ${orderNumber}` : 'បានបន្ថែមវិញពីការបោះបង់ការកម្មង់'
+      notes: orderNumber ? `បានបន្ថែមវិញពីការបោះបង់ការកម្មង់លេខ: ${orderNumber}` : 'បានបន្ថែមវិញពីការបោះបង់ការកម្មង់',
+      hidden: true
     })
   }
 

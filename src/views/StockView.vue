@@ -174,7 +174,10 @@ const materialGroups = computed(() => {
       const sizeGroup = groups[khmerName].sizes[sizeKey]
       sizeGroup.totalIn += tx.quantity
       sizeGroup.totalSpent += tx.totalPrice
-      sizeGroup.transactions.push(tx)
+      // Only add non-hidden transactions to history
+      if (!tx.hidden) {
+        sizeGroup.transactions.push(tx)
+      }
       groups[khmerName].totalQty += tx.quantity
       groups[khmerName].totalValue += tx.totalPrice
     })
@@ -216,9 +219,17 @@ const materialGroups = computed(() => {
           teaGramsTotalOut += tx.quantity
         })
 
+      // Calculate តែ in transactions (from product deletion returns) in grams
+      let teaGramsTotalIn = 0
+      stockStore.materialTransactions
+        .filter((tx) => tx.type === 'in' && tx.materialName === 'តែ')
+        .forEach((tx) => {
+          teaGramsTotalIn += tx.quantity
+        })
+
       // Convert ទាបបារាំង kg to តែ grams: 1kg = 150g
-      const teaGramsTotalIn = naSize.totalIn * stockStore.TEA_POWDER_TO_TEA_GRAMS
-      const teaGramsBalance = (naSize.balance * stockStore.TEA_POWDER_TO_TEA_GRAMS) - teaGramsTotalOut
+      const teaPowderGramsTotalIn = naSize.totalIn * stockStore.TEA_POWDER_TO_TEA_GRAMS
+      const teaGramsBalance = teaPowderGramsTotalIn - teaGramsTotalOut + teaGramsTotalIn
 
       // Use user-input price per gram
       const userTeaPricePerGram = stockStore.getTeaPricePerGram()
@@ -229,7 +240,7 @@ const materialGroups = computed(() => {
         sizes: {
           'N/A': {
             size: 'N/A',
-            totalIn: teaGramsTotalIn,
+            totalIn: teaPowderGramsTotalIn + teaGramsTotalIn,
             totalOut: teaGramsTotalOut,
             balance: teaGramsBalance,
             totalSpent: naSize.totalSpent,
@@ -238,7 +249,7 @@ const materialGroups = computed(() => {
             teaPricePerGram: userTeaPricePerGram,
           },
         },
-        totalQty: teaGramsTotalIn,
+        totalQty: teaPowderGramsTotalIn + teaGramsTotalIn,
         totalValue: naSize.totalSpent,
         latestDate: teaPowderGroup.latestDate,
         isDerived: true,

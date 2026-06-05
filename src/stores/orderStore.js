@@ -275,7 +275,35 @@ export const useOrderStore = defineStore('orders', () => {
     return orders.value.find(o => o.id === id)
   }
 
-  return {
+  
+  async function deleteOrder(id) {
+    try {
+      const order = getOrderById(id)
+      if (!order) {
+        throw new Error(`Order ${id} not found`)
+      }
+
+      // Delete the order from backend (cascade deletes order_items and income)
+      await api.delete(`/orders/${id}`)
+
+      // Remove order from local state
+      orders.value = orders.value.filter(o => o.id !== id)
+
+      // Also remove associated income from local state
+      const incomeStore = useIncomeStore()
+      const income = incomeStore.getIncomeByOrderId(id)
+      if (income) {
+        incomeStore.incomes.value = incomeStore.incomes.value.filter(i => i.id !== income.id)
+      }
+
+      return order
+    } catch (error) {
+      console.error(`Failed to delete order ${id}:`, error)
+      throw error
+    }
+  }
+
+return {
     orders,
     pendingOrders,
     completedOrders,
@@ -283,6 +311,7 @@ export const useOrderStore = defineStore('orders', () => {
     fetchOrders,
     createOrder,
     updateOrder,
+    deleteOrder,
     cancelOrder,
     completeOrder,
     getOrderById

@@ -248,12 +248,28 @@ export const useStockStore = defineStore('stock', () => {
         }
       }
 
-      // Check tea grams
-      const teaGrams = (TEA_GRAMS_PER_SIZE[size] || 0) * qty
-      if (teaGrams > 0) {
-        const teaBalance = getMaterialBalance('តែ', size)
-        if (teaBalance < teaGrams) {
-          shortages.push({ material: 'តែ', size, needed: teaGrams, available: teaBalance, unit: 'g' })
+      // Check tea grams - តែ is derived from ទាបបារាំង (1kg = 150g តែ)
+      const teaGramsNeeded = (TEA_GRAMS_PER_SIZE[size] || 0) * qty
+      if (teaGramsNeeded > 0) {
+        // Calculate derived tea balance: (ទាបបារាំង kg * 150) - total តែ out transactions in grams
+        const teaPowderBalanceKg = getMaterialBalance('ទាបបារាំង', 'N/A')
+        const teaGramsAvailable = teaPowderBalanceKg * TEA_POWDER_TO_TEA_GRAMS
+
+        // Subtract total តែ out transactions for this size
+        const teaOutTotal = materialTransactions.value
+          .filter(tx => tx.type === 'out' && tx.materialName === 'តែ' && tx.size === size)
+          .reduce((sum, tx) => sum + tx.quantity, 0)
+
+        const teaBalance = teaGramsAvailable - teaOutTotal
+
+        if (teaBalance < teaGramsNeeded) {
+          shortages.push({
+            material: 'តែ',
+            size,
+            needed: teaGramsNeeded,
+            available: Math.max(0, teaBalance),
+            unit: 'g'
+          })
         }
       }
     }

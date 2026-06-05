@@ -615,8 +615,8 @@ async function handleMaterialSave(data) {
                       <span class="unit-label">/ឯកតា</span>
                     </template>
                     <template v-else-if="group.isDerived">
-                      {{ Object.values(group.sizes)[0]?.balance?.toFixed(1) / 1000 || 0 }} 
-                      <span class="unit-label">Kg</span>
+                      {{ Object.values(group.sizes)[0]?.balance?.toFixed(1) || 0 }} 
+                      <span class="unit-label">g</span>
                     </template>
                     <template v-else>
                       {{ Object.values(group.sizes).reduce((sum, s) => sum + s.balance, 0) }}

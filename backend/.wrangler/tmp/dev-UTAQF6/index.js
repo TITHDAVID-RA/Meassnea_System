@@ -287,7 +287,8 @@ var src_default = {
           const { results: items } = await db.prepare("SELECT * FROM order_items").all();
           return jsonResponse(orders.map((order) => ({
             ...order,
-            items: items.filter((item) => item.order_id === order.id)
+            items: items.filter((item) => item.order_id === order.id),
+            free_items: order.free_items ? JSON.parse(order.free_items) : []
           })));
         }
         if (method === "POST") {
@@ -330,6 +331,20 @@ var src_default = {
               }
             }
           }
+          for (const item of validatedFreeItems) {
+            const pId = item.product_id || item.productId;
+            const qty = Number(item.quantity || 1);
+            if (pId) {
+              const product = await db.prepare("SELECT * FROM products WHERE id = ?").bind(pId).first();
+              if (product) {
+                await db.prepare("UPDATE products SET quantity = ? WHERE id = ?").bind(product.quantity - qty, pId).run();
+                await db.prepare(`
+                  INSERT INTO inventory_movements (id, product_id, product_name, type, quantity, previous_quantity, new_quantity, reference, reference_id, notes)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `).bind(crypto.randomUUID(), pId, product.name, "out", qty, product.quantity, product.quantity - qty, order_number, id, `Free item for ${customer}`).run();
+              }
+            }
+          }
           if (case_box_qty > 0) {
             let boxMat = await db.prepare("SELECT * FROM materials WHERE name = 'case_box' LIMIT 1").first();
             if (boxMat) {
@@ -341,10 +356,19 @@ var src_default = {
             }
           }
           const plasticBagCost = await calculatePlasticBagCost(validatedBags.map((b) => ({ size: b.size, qty: Number(b.qty || b.quantity || 0) })));
+          let rawFreeItems = body.freeItems || body.free_items || [];
+          if (typeof rawFreeItems === "string") {
+            try {
+              rawFreeItems = JSON.parse(rawFreeItems);
+            } catch (e) {
+              rawFreeItems = [];
+            }
+          }
+          const validatedFreeItems = Array.isArray(rawFreeItems) ? rawFreeItems.filter((f) => f.product_id || f.productId) : [];
           const statements = [
             db.prepare(`
-              INSERT INTO orders (id, order_number, customer, total, delivery_cost, plastic_bags, plastic_bag_cost, case_box_qty, payment_method, status, order_date)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              INSERT INTO orders (id, order_number, customer, total, delivery_cost, plastic_bags, plastic_bag_cost, case_box_qty, free_items, payment_method, status, order_date)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `).bind(
               id,
               order_number,
@@ -354,6 +378,7 @@ var src_default = {
               JSON.stringify(validatedBags.map((b) => ({ size: b.size, qty: Number(b.qty || b.quantity || 0) }))),
               plasticBagCost,
               case_box_qty,
+              JSON.stringify(validatedFreeItems),
               payment_method,
               status,
               order_date
@@ -399,6 +424,27 @@ var src_default = {
                 await returnPlasticBag(bag.size, Number(bag.qty || bag.quantity || 0), order.order_number);
               }
             }
+            if (order && order.free_items) {
+              try {
+                const freeItems = JSON.parse(order.free_items);
+                for (const item of freeItems) {
+                  const pId = item.product_id || item.productId;
+                  const qty = Number(item.quantity || 1);
+                  if (pId && qty > 0) {
+                    const product = await db.prepare("SELECT * FROM products WHERE id = ?").bind(pId).first();
+                    if (product) {
+                      await db.prepare("UPDATE products SET quantity = ? WHERE id = ?").bind(product.quantity + qty, pId).run();
+                      await db.prepare(`
+                        INSERT INTO inventory_movements (id, product_id, product_name, type, quantity, previous_quantity, new_quantity, reference, reference_id, notes)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      `).bind(crypto.randomUUID(), pId, product.name, "return", qty, product.quantity, product.quantity + qty, order.order_number, id, "Free item returned - order cancelled").run();
+                    }
+                  }
+                }
+              } catch (e) {
+                console.error("Error returning free items:", e);
+              }
+            }
             await db.prepare("DELETE FROM incomes WHERE order_id = ?").bind(id).run();
           }
           await db.prepare(`
@@ -412,6 +458,23 @@ var src_default = {
             const bags = JSON.parse(order.plastic_bags);
             for (const bag of bags) {
               await returnPlasticBag(bag.size, Number(bag.qty || bag.quantity || 0), order.order_number);
+            }
+          }
+          if (order && order.free_items) {
+            try {
+              const freeItems = JSON.parse(order.free_items);
+              for (const item of freeItems) {
+                const pId = item.product_id || item.productId;
+                const qty = Number(item.quantity || 1);
+                if (pId && qty > 0) {
+                  const product = await db.prepare("SELECT * FROM products WHERE id = ?").bind(pId).first();
+                  if (product) {
+                    await db.prepare("UPDATE products SET quantity = ? WHERE id = ?").bind(product.quantity + qty, pId).run();
+                  }
+                }
+              }
+            } catch (e) {
+              console.error("Error returning free items on delete:", e);
             }
           }
           await db.prepare("DELETE FROM order_items WHERE order_id = ?").bind(id).run();

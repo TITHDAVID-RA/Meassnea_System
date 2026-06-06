@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS orders (
   plastic_bags TEXT DEFAULT '[]',
   plastic_bag_cost REAL DEFAULT 0,
   case_box_qty INTEGER DEFAULT 0,
+  free_items TEXT DEFAULT '[]',
   payment_method TEXT DEFAULT 'cash',
   status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'cancelled')),
   order_date DATETIME,

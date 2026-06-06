@@ -162,6 +162,12 @@ async function downloadInvoice() {
                 <td>$ {{ formatNumber(item.unitPrice) }}</td>
                 <td>$ {{ formatNumber(item.quantity * item.unitPrice) }}</td>
               </tr>
+              <tr v-for="(item, index) in (order.freeItems || [])" :key="'free-' + item.productId" class="free-item-row">
+                <td>{{ getDescription(item.productName || item.name) }} <span class="free-badge">(ឥតគិតថ្លៃ)</span></td>
+                <td>{{ item.quantity }}</td>
+                <td>$ 0.00</td>
+                <td>$ 0.00</td>
+              </tr>
             </tbody>
           </table>
 
@@ -551,6 +557,27 @@ async function downloadInvoice() {
   /* padding: 16px 24px; */
   border-top: 1px solid #e2e8f0;
   background: #f8fafc;
+}
+
+.free-item-row {
+  background: #fdf2f8 !important;
+}
+
+.free-item-row td {
+  color: #db2777;
+  font-style: italic;
+}
+
+.free-badge {
+  display: inline-block;
+  background: #db2777;
+  color: white;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  margin-left: 6px;
+  font-style: normal;
 }
 
 .btn {

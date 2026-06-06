@@ -69,6 +69,16 @@ export const useOrderStore = defineStore('orders', () => {
             unitPrice: Number(Number(item.unit_price || 0).toFixed(2)),
             costPrice: Number(Number(item.cost_price || 0).toFixed(2)),
             total: Number(Number(item.total || 0).toFixed(2))
+          })),
+          freeItems: typeof o.free_items === 'string' ? JSON.parse(o.free_items) : (o.freeItems || o.free_items || []).map(item => ({
+            id: item.id,
+            productId: item.product_id,
+            name: item.product_name,
+            productName: item.product_name,
+            quantity: Number(item.quantity || 1),
+            unitPrice: 0,
+            costPrice: Number(Number(item.cost_price || 0).toFixed(2)),
+            total: 0
           }))
         }
       })
@@ -106,7 +116,16 @@ export const useOrderStore = defineStore('orders', () => {
           unit_price: Number(Number(item.unitPrice || 0).toFixed(2)),
           cost_price: Number(Number(item.costPrice || 0).toFixed(2)),
           total: Number(Number(item.total || 0).toFixed(2))
-        }))
+        })),
+        free_items: JSON.stringify((orderData.freeItems || []).map(item => ({
+          id: generateId(),
+          product_id: item.productId,
+          product_name: item.name || item.productName || 'ផលិតផល',
+          quantity: Number(item.quantity || 1),
+          unit_price: 0,
+          cost_price: Number(Number(item.costPrice || 0).toFixed(2)),
+          total: 0
+        })))
       }
 
       await api.post('/orders', payload)
@@ -132,6 +151,15 @@ export const useOrderStore = defineStore('orders', () => {
           unitPrice: Number(Number(item.unitPrice || 0).toFixed(2)),
           costPrice: Number(Number(item.costPrice || 0).toFixed(2)),
           total: Number(Number(item.total || 0).toFixed(2))
+        })),
+        freeItems: (orderData.freeItems || []).map(item => ({
+          productId: item.productId,
+          name: item.name || item.productName || 'ផលិតផល',
+          productName: item.name || item.productName || 'ផលិតផល',
+          quantity: Number(item.quantity || 1),
+          unitPrice: 0,
+          costPrice: Number(Number(item.costPrice || 0).toFixed(2)),
+          total: 0
         }))
       }
 
@@ -218,6 +246,7 @@ export const useOrderStore = defineStore('orders', () => {
         plastic_bags: JSON.stringify(updates.plasticBags || []),
         plastic_bag_cost: Number(Number(updates.plasticBagCost || 0).toFixed(2)),
         case_box_qty: Number(updates.caseBoxQty),
+        free_items: JSON.stringify(updates.freeItems || []),
         payment_method: updates.paymentMethod,
         status: updates.status,
         updated_at: new Date().toISOString()

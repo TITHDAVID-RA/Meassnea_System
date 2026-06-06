@@ -93,8 +93,8 @@ function viewProducts(item) {
 }
 
 function getProductBreakdown(order) {
-  if (!order || !order.items) return []
-  return order.items.map(item => {
+  if (!order) return []
+  const paidItems = (order.items || []).map(item => {
     const size = stockStore.getSizeFromProductName(item.name || item.productName)
     const qty = Number(item.quantity || 0)
     const unitPrice = Number(item.unitPrice || 0)
@@ -107,9 +107,26 @@ function getProductBreakdown(order) {
       costPrice,
       totalPrice: qty * unitPrice,
       totalCost: qty * costPrice,
-      profit: (unitPrice - costPrice) * qty
+      profit: (unitPrice - costPrice) * qty,
+      isFree: false
     }
   })
+  const freeItemsList = (order.freeItems || []).map(item => {
+    const size = stockStore.getSizeFromProductName(item.name || item.productName)
+    const qty = Number(item.quantity || 0)
+    return {
+      name: `${item.name || item.productName || 'ផលិតផល'} (ឥតគិតថ្លៃ)`,
+      size: size || 'N/A',
+      quantity: qty,
+      unitPrice: 0,
+      costPrice: 0,
+      totalPrice: 0,
+      totalCost: 0,
+      profit: 0,
+      isFree: true
+    }
+  })
+  return [...paidItems, ...freeItemsList]
 }
 
 async function saveIncome(data) {
@@ -247,9 +264,9 @@ async function deleteIncome(id) {
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="(product, idx) in getProductBreakdown(productOrder)" :key="idx">
+                <tr v-for="(product, idx) in getProductBreakdown(productOrder)" :key="idx" :class="{ 'free-item': product.isFree }">
                   <td>
-                    <div class="product-name"><i class="fas fa-cube"></i><span>{{ product.name }}</span></div>
+                    <div class="product-name"><i :class="product.isFree ? 'fas fa-gift' : 'fas fa-cube'"></i><span>{{ product.name }}</span></div>
                   </td>
                   <td>
                     <span class="size-badge" :class="{ 'size-s': product.size === 'S', 'size-m': product.size === 'M', 'size-l': product.size === 'L' }">
@@ -501,6 +518,17 @@ async function deleteIncome(id) {
 
 .btn-icon.info { color: #3b82f6; }
 .btn-icon.info:hover { background: #eff6ff; }
+
+.product-table tr.free-item td {
+  background: #fdf2f8;
+  color: #db2777;
+  font-style: italic;
+}
+
+.product-table tr.free-item .product-name i {
+  background: #fce7f3;
+  color: #db2777;
+}
 
 @media (max-width: 1024px) {
   .mobile-dots-toggle { display: flex; }

@@ -225,6 +225,24 @@ function getMaterialBreakdown(order) {
     })
   }
 
+  // Free items (no cost shown in modal)
+  const freeItems = order.freeItems || []
+  if (freeItems.length > 0) {
+    freeItems.forEach(item => {
+      const qty = Number(item.quantity || 1)
+      if (qty > 0) {
+        breakdown.push({
+          name: `${item.productName || item.name || 'ទំនិញឥតគិតថ្លៃ'} (ឥតគិតថ្លៃ)`,
+          quantity: qty,
+          unitCost: 0,
+          lastPrice: 0,
+          totalCost: 0,
+          type: 'free'
+        })
+      }
+    })
+  }
+
   // Delivery
   const deliveryCost = Number(order.deliveryCost || 0)
   if (deliveryCost > 0) {
@@ -266,6 +284,30 @@ async function cancelOrder(id) {
           reference: order.orderNumber,
           referenceId: order.id,
           notes: 'Order cancelled - stock returned',
+        })
+      }
+    }
+
+    // Return free items stock
+    const freeItems = order.freeItems || []
+    for (const item of freeItems) {
+      const product = stockStore.getProductById(item.productId)
+      if (product) {
+        const previousQty = product.quantity
+        await stockStore.adjustStock(item.productId, item.quantity, 'in')
+
+        await inventoryStore.recordMovement({
+          productId: product.id,
+          productName: product.name,
+          type: 'return',
+          quantity: item.quantity,
+          previousQuantity: previousQty,
+          newQuantity: product.quantity,
+          unitPrice: 0,
+          totalValue: 0,
+          reference: order.orderNumber,
+          referenceId: order.id,
+          notes: 'Free item returned - order cancelled',
         })
       }
     }
@@ -530,7 +572,8 @@ async function completeOrder(id) {
                         :class="{
                           'fas fa-shopping-bag': item.type === 'plastic',
                           'fas fa-box': item.type === 'case',
-                          'fas fa-truck': item.type === 'delivery'
+                          'fas fa-truck': item.type === 'delivery',
+                          'fas fa-gift': item.type === 'free'
                         }"
                       ></i>
                       <span>{{ item.name }}</span>
@@ -810,6 +853,11 @@ async function completeOrder(id) {
 .material-name i.fa-truck {
   background: #fef3c7;
   color: #d97706;
+}
+
+.material-name i.fa-gift {
+  background: #fce7f3;
+  color: #db2777;
 }
 
 .text-primary {

@@ -109,7 +109,7 @@ async function downloadInvoice() {
 
           <!-- Contact Info -->
           <div class="contact-info">
-            <p><strong>Address:</strong> Mepai Village, Phuchry Commune, Mondolkiri Province</p>
+            <p><strong>Address:</strong> Mepai Village, Phuchry Commune,District​ Pechreada, Mondolkiri Province</p>
             <p><strong>Contact:</strong> 097 666 4090 / 096 461 9618</p>
           </div>
 

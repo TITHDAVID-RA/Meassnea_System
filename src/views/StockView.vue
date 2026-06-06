@@ -372,6 +372,9 @@ async function handleMaterialEdit(data) {
       date: data.date,
       notes: data.notes,
     })
+
+    // Refresh stock data to show updated costPrice in product table
+    await stockStore.fetchStockData()
   } catch (error) {
     alert('មានបញ្ហាក្នុងការកែប្រែប្រតិបត្តិការ!')
   }

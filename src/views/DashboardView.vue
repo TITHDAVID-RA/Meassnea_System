@@ -61,6 +61,22 @@ const filteredOrders = computed(() => {
   )
 })
 
+// --- Sold Product Count by Size ---
+const soldBySize = computed(() => {
+  const counts = { S: 0, M: 0, L: 0 }
+
+  filteredOrders.value.forEach(order => {
+    order.items?.forEach(item => {
+      const size = stockStore.getSizeFromProductName(item.name || item.productName)
+      if (size && counts[size] !== undefined) {
+        counts[size] += Number(item.quantity || 0)
+      }
+    })
+  })
+
+  return counts
+})
+
 const stockBySize = computed(() => {
   const sizes = { S: 0, M: 0, L: 0 }
   stockStore.stockItems.forEach((item) => {
@@ -127,6 +143,30 @@ function clearFilters() {
         :value="totalOrderCount"
         bg-class="bg-warning"
       />
+    </div>
+
+    <div class="stats-grid sold-grid">
+      <StatCard
+        icon="fas fa-box"
+        label="S (តូច) បានលក់"
+        :value="soldBySize.S"
+        bg-class="bg-info"
+      />
+      <StatCard
+        icon="fas fa-box-open"
+        label="M (មធ្យម) បានលក់"
+        :value="soldBySize.M"
+        bg-class="bg-primary"
+      />
+      <StatCard
+        icon="fas fa-boxes-stacked"
+        label="L (ធំ) បានលក់"
+        :value="soldBySize.L"
+        bg-class="bg-secondary"
+      />
+    </div>
+
+    <div class="stats-grid">
       <StatCard icon="fas fa-box" label="ស្តុក S (តូច)" :value="stockBySize.S" bg-class="bg-info" />
       <StatCard
         icon="fas fa-box-open"
@@ -150,6 +190,10 @@ function clearFilters() {
   grid-template-columns: repeat(3, 1fr);
   gap: 1.5rem;
   margin-top: 1rem;
+}
+
+.sold-grid {
+  margin-top: 1.5rem;
 }
 
 .filter-actions {

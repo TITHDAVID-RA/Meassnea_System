@@ -223,6 +223,44 @@ export const useStockStore = defineStore('stock', () => {
     return totalCost
   }
 
+  /**
+   * Recalculate costPrice for all products that use a given material+size
+   * Call this after material prices change (edit/delete transactions)
+   */
+  async function recalculateProductCostsByMaterial(materialName, size) {
+    // Determine which product sizes are affected by this material
+    const affectedSizes = []
+
+    if (materialName === 'ទាបបារាំង') {
+      affectedSizes.push('N/A') // ទាបបារាំង product
+    } else if (materialName === 'ពលកម្ម') {
+      affectedSizes.push('S', 'M', 'L')
+    } else if (SIZED_MATERIALS.includes(materialName)) {
+      affectedSizes.push(size)
+    }
+
+    // For each affected size, find matching products and update their costPrice
+    for (const productSize of affectedSizes) {
+      const productsToUpdate = stockItems.value.filter(p => {
+        if (productSize === 'N/A') {
+          return p.name === 'ទាបបារាំង'
+        }
+        return p.size === productSize && p.name !== 'ទាបបារាំង'
+      })
+
+      for (const product of productsToUpdate) {
+        const newCostPrice = getMaterialCostPerUnit(productSize)
+        if (newCostPrice > 0 && Math.abs(newCostPrice - product.costPrice) > 0.0001) {
+          try {
+            await updateProduct(product.id, { costPrice: newCostPrice })
+          } catch (error) {
+            console.error(`Failed to recalculate costPrice for ${product.name}:`, error)
+          }
+        }
+      }
+    }
+  }
+
 
   /**
    * Check if there are enough materials to produce a given product
@@ -566,6 +604,10 @@ export const useStockStore = defineStore('stock', () => {
         createdAt: new Date()
       }
       materialTransactions.value.push(transaction)
+
+      // Recalculate product costs for affected products
+      await recalculateProductCostsByMaterial(data.materialName, size || 'N/A')
+
       return transaction
     } catch (error) {
       console.error('Failed material stock-in inside D1:', error)
@@ -770,6 +812,11 @@ export const useStockStore = defineStore('stock', () => {
 
       await api.delete(`/material-transactions/${id}`)
       materialTransactions.value = materialTransactions.value.filter(tx => tx.id !== id)
+
+      // Recalculate product costs for affected products
+      if (txToDelete.type === 'in') {
+        await recalculateProductCostsByMaterial(txToDelete.materialName, txToDelete.size)
+      }
     } catch (error) {
       console.error(`Failed to delete transaction ${id} from D1:`, error)
       throw error
@@ -848,11 +895,21 @@ export const useStockStore = defineStore('stock', () => {
 
       const index = materialTransactions.value.findIndex(tx => tx.id === id)
       if (index !== -1) {
+        const oldTx = materialTransactions.value[index]
         materialTransactions.value[index] = {
           ...materialTransactions.value[index],
           ...updates,
           updatedAt: new Date()
         }
+
+        // Recalculate costPrice for affected products if price or quantity changed
+        if (updates.unitPrice !== undefined || updates.quantity !== undefined || updates.totalPrice !== undefined) {
+          await recalculateProductCostsByMaterial(
+            updates.materialName || oldTx.materialName,
+            updates.size || oldTx.size
+          )
+        }
+
         return materialTransactions.value[index]
       }
       return null
@@ -907,6 +964,7 @@ export const useStockStore = defineStore('stock', () => {
     getMaterialPriceLabel,
     getTeaPricePerGram,
     setTeaPricePerGram,
+    recalculateProductCostsByMaterial,
     ALLOWED_PRODUCTS,
     ALLOWED_MATERIALS,
     SIZED_MATERIALS,

@@ -25,6 +25,10 @@ const showOrderModal = ref(false)
 const showDetailModal = ref(false)
 const selectedOrderId = ref(null)
 
+// Material detail modal state
+const showMaterialModal = ref(false)
+const materialOrder = ref(null)
+
 const activeMenuId = ref(null)
 
 const toggleMenu = (id) => {
@@ -172,6 +176,69 @@ function viewDetails(id) {
   selectedOrderId.value = id
   showDetailModal.value = true
   activeMenuId.value = null
+}
+
+// Open material usage modal
+function viewMaterials(order) {
+  materialOrder.value = order
+  showMaterialModal.value = true
+  activeMenuId.value = null
+}
+
+// Get material breakdown for the modal
+function getMaterialBreakdown(order) {
+  const breakdown = []
+
+  // Plastic bags
+  const bags = order.plasticBags || []
+  if (bags.length > 0) {
+    bags.forEach(bag => {
+      const bagSize = bag.size
+      const bagQty = Number(bag.qty || bag.quantity || 0)
+      if (bagSize && ['S', 'M'].includes(bagSize) && bagQty > 0) {
+        const unitCost = stockStore.getMaterialUnitCost('ថង់', bagSize)
+        const lastPrice = stockStore.getLastMaterialPrice('ថង់', bagSize)
+        breakdown.push({
+          name: `ថង់ ${bagSize}`,
+          quantity: bagQty,
+          unitCost: unitCost,
+          lastPrice: lastPrice,
+          totalCost: bagQty * unitCost,
+          type: 'plastic'
+        })
+      }
+    })
+  }
+
+  // Case boxes
+  const caseBoxQty = Number(order.caseBoxQty || 0)
+  if (caseBoxQty > 0) {
+    const unitCost = stockStore.getMaterialUnitCost('កេស', 'N/A')
+    const lastPrice = stockStore.getLastMaterialPrice('កេស', 'N/A')
+    breakdown.push({
+      name: 'កេស',
+      quantity: caseBoxQty,
+      unitCost: unitCost,
+      lastPrice: lastPrice,
+      totalCost: caseBoxQty * unitCost,
+      type: 'case'
+    })
+  }
+
+  // Delivery
+  const deliveryCost = Number(order.deliveryCost || 0)
+  if (deliveryCost > 0) {
+    breakdown.push({
+      name: 'ថ្លៃដឹកជញ្ជូន',
+      quantity: 1,
+      unitCost: deliveryCost,
+      lastPrice: deliveryCost,
+      totalCost: deliveryCost,
+      type: 'delivery'
+    })
+  }
+
+  return breakdown
 }
 
 async function cancelOrder(id) {
@@ -383,6 +450,13 @@ async function completeOrder(id) {
                       <i class="fas fa-eye"></i> <span class="mobile-label">View Details</span>
                     </button>
                     <button
+                      class="btn-icon info"
+                      @click="viewMaterials(order)"
+                      title="មើលវត្ថុធាតុដើម"
+                    >
+                      <i class="fas fa-box-open"></i> <span class="mobile-label">មើលវត្ថុធាតុដើម</span>
+                    </button>
+                    <button
                       v-if="order.status === 'pending'"
                       class="btn-icon success"
                       @click="completeOrder(order.id)"
@@ -422,6 +496,68 @@ async function completeOrder(id) {
 
     <OrderModal v-model="showOrderModal" />
     <OrderDetailModal v-model="showDetailModal" :order-id="selectedOrderId" />
+
+    <!-- Material Usage Modal -->
+    <div v-if="showMaterialModal" class="modal-overlay" @click="showMaterialModal = false">
+      <div class="modal-content material-modal" @click.stop>
+        <div class="modal-header">
+          <h3>
+            <i class="fas fa-box-open"></i>
+            វត្ថុធាតុដើមប្រើប្រាស់ — {{ materialOrder?.orderNumber }}
+          </h3>
+          <button class="modal-close" @click="showMaterialModal = false">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div v-if="materialOrder" class="material-breakdown">
+
+            <table class="material-table">
+              <thead>
+                <tr>
+                  <th>វត្ថុធាតុដើម</th>
+                  <th>ចំនួន</th>
+                  <th>តម្លៃជាមធ្យម</th>
+                  <th>តម្លៃចុងក្រោយ</th>
+                  <th>ថ្លៃរួម</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(item, idx) in getMaterialBreakdown(materialOrder)" :key="idx">
+                  <td>
+                    <div class="material-name">
+                      <i
+                        :class="{
+                          'fas fa-shopping-bag': item.type === 'plastic',
+                          'fas fa-box': item.type === 'case',
+                          'fas fa-truck': item.type === 'delivery'
+                        }"
+                      ></i>
+                      <span>{{ item.name }}</span>
+                    </div>
+                  </td>
+                  <td>{{ item.quantity }}</td>
+                  <td>{{ formatCurrency(item.unitCost) }}</td>
+                  <td>{{ formatCurrency(item.lastPrice) }}</td>
+                  <td class="text-primary">
+                    <strong>{{ formatCurrency(item.totalCost) }}</strong>
+                  </td>
+                </tr>
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="4" class="text-right"><strong>សរុបថ្លៃវត្ថុធាតុដើម:</strong></td>
+                  <td class="text-primary">
+                    <strong>{{ formatCurrency(getMaterialBreakdown(materialOrder).reduce((s, i) => s + i.totalCost, 0)) }}</strong>
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -522,6 +658,190 @@ async function completeOrder(id) {
   display: none;
 }
 
+/* Material Modal Styles */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+
+.modal-content {
+  background: white;
+  border-radius: 12px;
+  width: 100%;
+  max-width: 600px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.modal-header h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0;
+}
+
+.modal-header h3 i {
+  color: #3b82f6;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0.5rem;
+  border-radius: 6px;
+  font-size: 1rem;
+}
+
+.modal-close:hover {
+  background: #f1f5f9;
+  color: #dc2626;
+}
+
+.modal-body {
+  padding: 1.5rem;
+}
+
+.breakdown-summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: #f8fafc;
+  border-radius: 8px;
+}
+
+.summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.summary-item .label {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.summary-item strong {
+  font-size: 0.95rem;
+  color: #1e293b;
+}
+
+.material-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.material-table th {
+  text-align: left;
+  padding: 0.75rem 1rem;
+  background: #f1f5f9;
+  color: #475569;
+  font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.material-table td {
+  padding: 0.875rem 1rem;
+  border-bottom: 1px solid #e2e8f0;
+  color: #334155;
+}
+
+.material-table tbody tr:hover {
+  background: #f8fafc;
+}
+
+.material-table tfoot td {
+  background: #f0fdf4;
+  border-top: 2px solid #bbf7d0;
+  padding: 1rem;
+  font-size: 1rem;
+}
+
+.material-name {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.material-name i {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+
+.material-name i.fa-shopping-bag {
+  background: #dbeafe;
+  color: #2563eb;
+}
+
+.material-name i.fa-box {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+.material-name i.fa-truck {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+.text-primary {
+  color: #2563eb;
+}
+
+.material-note {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: #1e40af;
+}
+
+.material-note i {
+  color: #3b82f6;
+}
+
+/* Button styles */
+.btn-icon.info {
+  color: #3b82f6;
+}
+
+.btn-icon.info:hover {
+  background: #eff6ff;
+}
+
 @media (max-width: 768px) {
   .btn-dots {
     display: block;
@@ -567,32 +887,33 @@ async function completeOrder(id) {
   .btn-icon.success {
     color: #28a745;
   }
+  .btn-icon.info {
+    color: #3b82f6;
+  }
 
   .mobile-label {
     display: inline;
     font-size: 0.9rem;
   }
 
-  .btn-dots {
-    display: block;
+  .modal-content {
+    max-width: 95vw;
+    margin: 0.5rem;
   }
 
-  .action-buttons {
-    display: none;
-    position: absolute;
-    right: 0;
-    top: 100%;
-    background: white;
-    box-shadow: var(--shadow-lg);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    z-index: 100;
-    flex-direction: column;
-    min-width: 150px;
+  .breakdown-summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .material-table {
+    font-size: 0.8rem;
   }
 
-  .action-buttons.is-open {
-    display: flex;
+  .material-table th,
+  .material-table td {
+    padding: 0.5rem 0.5rem;
   }
 }
 </style>

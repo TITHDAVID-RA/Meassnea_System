@@ -273,7 +273,12 @@ function getMaterialCostBreakdown(size) {
   PRODUCTION_MATERIALS.forEach(matName => {
     const cost = stockStore.getLastMaterialPrice(matName, size)
     if (cost > 0) {
-      breakdown.push({ name: matName, cost: cost, unit: 'ឯកតា' })
+      // Use display label for ថង់វេចខ្ចប់ size M → កំប៉ុង
+      let displayName = matName
+      if (matName === 'ថង់វេចខ្ចប់' && size === 'M') {
+        displayName = 'កំប៉ុង'
+      }
+      breakdown.push({ name: displayName, cost: cost, unit: 'ឯកតា' })
     }
   })
 

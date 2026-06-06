@@ -182,8 +182,8 @@ async function save() {
                 <input type="date" v-model="form.date" class="form-input">
               </div>
               <div class="form-group">
-                <label>ឈ្មោះអតិថិជន</label>
-                <input type="text" v-model="form.customer" placeholder="ឈ្មោះអតិថិជន" class="form-input">
+                <label>លេខទូរសព្ទ</label>
+                <input type="text" v-model="form.customer" placeholder="លេខទូរសព្ទ" class="form-input">
               </div>
             </div>
 
@@ -265,7 +265,7 @@ async function save() {
                     <input type="text" :value="formatCurrency(item.costPrice)" readonly class="form-input readonly" title="តម្លៃដើម">
                   </div>
                   <div class="item-price">
-                    <input type="text" :value="formatCurrency(item.unitPrice)" readonly class="form-input readonly">
+                    <input type="number" v-model.number="item.unitPrice" placeholder="តម្លៃលក់" min="0" step="0.0001" class="form-input">
                   </div>
                   <button type="button" class="remove-item-btn" @click="removeItem(index)">
                     <i class="fas fa-trash"></i>

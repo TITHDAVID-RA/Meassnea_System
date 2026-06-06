@@ -330,7 +330,7 @@ async function completeOrder(id) {
             <tr>
               <th>Order #</th>
               <th>ថ្ងៃខែ</th>
-              <th>ឈ្មោះអតិថិជន</th>
+              <th>លេខទូរសព្ទ</th>
               <th>ទំនិញ</th>
               <th>តម្លៃទំនិញ</th>
               <th>ចំណូលសុទ្ធ</th>

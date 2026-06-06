@@ -134,8 +134,8 @@ async function downloadInvoice() {
           <div class="from-to-section">
             <div class="from-box">
               <h4>From:</h4>
-              <p class="product-name">Product Name: តែទាបបារាំង ធម្មជាតិ</p>
-              <p class="address">អាស័យដ្ឋាន: ភូមិមេបៃ ឃុំភូជ្រៃ ស្រុកកែវសីមា ខេត្តមណ្ឌលគិរី</p>
+              <p class="product-name">Product Name: តែផ្លែទៀបបារាំង​ មាសស្នេហ៍</p>
+              <p class="address">អាស័យដ្ឋាន: ភូមិមេប៉ៃ​ ឃុំពូជ្រៃ​ ស្រុកពេជ្រាដា​ ខេត្តមណ្ឌលគីរី</p>
               <p class="phone">Tel: 097 666 4090 / 096 461 9618</p>
             </div>
             <div class="to-box">

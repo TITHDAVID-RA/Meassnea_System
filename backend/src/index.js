@@ -74,7 +74,7 @@ export default {
       await env.meassnea_db.prepare(`
         INSERT INTO material_transactions (id, material_id, material_name, size, quantity, unit_price, total_price, type, notes, transaction_date)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(txId, material.id, 'plastic_bag', size, -qty, material.unit_price, -(qty * material.unit_price), 'deduction', `Order ${orderNumber}`, new Date().toISOString()).run();
+      `).bind(txId, material.id, 'plastic_bag', size, qty, material.unit_price, qty * material.unit_price, 'out', `Order ${orderNumber}`, new Date().toISOString()).run();
 
       return { material_id: material.id, previous_quantity: material.quantity, new_quantity: newQty };
     };
@@ -121,7 +121,7 @@ export default {
 
       const deductions = [];
       const TEA_GRAMS_PER_SIZE = { S: 100, M: 200, L: 500 };
-      
+
       // If it's a special raw product variant like 'ទាបបារាំង' without size properties
       if (product.name === 'ទាបបារាំង') {
         let material = await env.meassnea_db.prepare("SELECT * FROM materials WHERE name = 'tea_powder' LIMIT 1").first();
@@ -161,22 +161,20 @@ export default {
         }
       }
 
-      // Tea material raw leaves weight tracking (Gram based calculations mapping)
+      // Tea material - derived from ទាបបារាំង, do NOT update materials table
+      // Frontend calculates តែ balance from ទាបបារាំង kg * 150g conversion
       const gramsFactor = TEA_GRAMS_PER_SIZE[product.size] || 0;
       if (gramsFactor > 0) {
-        let teaMaterial = await env.meassnea_db.prepare("SELECT * FROM materials WHERE name = 'tea' LIMIT 1").first();
-        if (teaMaterial) {
-          const totalGramsDeducted = gramsFactor * quantity;
-          const newQty = teaMaterial.quantity - totalGramsDeducted;
-          await env.meassnea_db.prepare("UPDATE materials SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(newQty, teaMaterial.id).run();
-          
-          const txId = crypto.randomUUID();
-          await env.meassnea_db.prepare(`
-            INSERT INTO material_transactions (id, material_id, material_name, size, quantity, unit_price, total_price, type, notes, transaction_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).bind(txId, teaMaterial.id, 'តែ', product.size, -totalGramsDeducted, teaMaterial.unit_price, -(totalGramsDeducted * teaMaterial.unit_price), 'deduction', `Order ${orderNumber} - ${totalGramsDeducted}g`, new Date().toISOString()).run();
-          deductions.push({ material_id: teaMaterial.id, name: 'តែ', new_quantity: newQty });
-        }
+        const totalGramsDeducted = gramsFactor * quantity;
+
+        // Create out transaction for តែ (derived material, no materials table update)
+        const txId = crypto.randomUUID();
+        await env.meassnea_db.prepare(`
+          INSERT INTO material_transactions (id, material_id, material_name, size, quantity, unit_price, total_price, type, notes, transaction_date)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(txId, 'mat_8', 'តែ', product.size, totalGramsDeducted, 0, 0, 'out', `Order ${orderNumber} - ${product.name} x${quantity} (${totalGramsDeducted}g តែ)`, new Date().toISOString()).run();
+
+        deductions.push({ material_id: 'mat_8', name: 'តែ', new_quantity: null });
       }
 
       return deductions;
@@ -268,7 +266,7 @@ export default {
         }
         if (method === "POST") {
           const body = await request.json();
-          
+
           const id = getVal(body, 'id', 'id', crypto.randomUUID());
           const material_id = getVal(body, 'materialId', 'material_id', null);
           const material_name = getVal(body, 'materialName', 'material_name', 'Unknown Material');
@@ -364,7 +362,7 @@ export default {
         }
         if (method === "POST") {
           const body = await request.json();
-          
+
           const id = getVal(body, 'id', 'id', crypto.randomUUID());
           const order_number = getVal(body, 'orderNumber', 'order_number', `ORD-${Date.now()}`);
           const customer = getVal(body, 'customer', 'customer', 'Generic Customer');
@@ -376,14 +374,15 @@ export default {
             try { rawBags = JSON.parse(rawBags); } catch (e) { rawBags = []; }
           }
           const validatedBags = Array.isArray(rawBags) ? rawBags.filter(b => b.size && (b.qty || b.quantity)) : [];
-          
+
           const payment_method = getVal(body, 'paymentMethod', 'payment_method', 'cash');
           const status = getVal(body, 'status', 'status', 'pending');
           const order_date = getVal(body, 'date', 'order_date', new Date().toISOString());
           const case_box_qty = getNum(body, 'caseBoxQty', 'case_box_qty', 0);
           const items = body.items || [];
 
-          // Core Processing Deductions Triggers
+          // Order-level deductions: only ថង់ and កេស (packaging)
+          // Production materials (តែ, ប្រអប់, etc.) are already deducted when products are manufactured
           const bagDeductions = [];
           for (const bag of validatedBags) {
             const qty = Number(bag.qty || bag.quantity || 0);
@@ -393,18 +392,14 @@ export default {
             }
           }
 
-          const materialDeductions = [];
-          if (Array.isArray(items)) {
-            for (const item of items) {
-              const pId = getVal(item, 'productId', 'product_id', null);
-              const qty = getNum(item, 'quantity', 'quantity', 1);
-              if (pId) {
-                const deductions = await deductProductMaterials(pId, qty, order_number);
-                materialDeductions.push(...deductions);
-              }
-            }
+          // Parse free_items from request
+          let rawFreeItems = body.freeItems || body.free_items || [];
+          if (typeof rawFreeItems === 'string') {
+            try { rawFreeItems = JSON.parse(rawFreeItems); } catch (e) { rawFreeItems = []; }
           }
-          // Deduct free items stock too
+          const validatedFreeItems = Array.isArray(rawFreeItems) ? rawFreeItems.filter(f => f.product_id || f.productId) : [];
+
+          // Deduct free items stock (product quantity only, not materials)
           for (const item of validatedFreeItems) {
             const pId = item.product_id || item.productId;
             const qty = Number(item.quantity || 1);
@@ -419,27 +414,19 @@ export default {
               }
             }
           }
-
-          // Case box automatic usage deduct
+          // Case box automatic usage deduct (packaging only)
           if (case_box_qty > 0) {
             let boxMat = await db.prepare("SELECT * FROM materials WHERE name = 'case_box' LIMIT 1").first();
             if (boxMat) {
               await db.prepare("UPDATE materials SET quantity = ? WHERE id = ?").bind((boxMat.quantity - case_box_qty), boxMat.id).run();
               await db.prepare(`
                 INSERT INTO material_transactions (id, material_name, size, quantity, type, notes)
-                VALUES (?, 'កេស', 'N/A', ?, 'deduction', ?)
-              `).bind(crypto.randomUUID(), -case_box_qty, `Order ${order_number}`).run();
+                VALUES (?, 'កេស', 'N/A', ?, 'out', ?)
+              `).bind(crypto.randomUUID(), case_box_qty, `Order ${order_number}`).run();
             }
           }
 
           const plasticBagCost = await calculatePlasticBagCost(validatedBags.map(b => ({ size: b.size, qty: Number(b.qty || b.quantity || 0) })));
-
-          // Parse free_items from request
-          let rawFreeItems = body.freeItems || body.free_items || [];
-          if (typeof rawFreeItems === 'string') {
-            try { rawFreeItems = JSON.parse(rawFreeItems); } catch (e) { rawFreeItems = []; }
-          }
-          const validatedFreeItems = Array.isArray(rawFreeItems) ? rawFreeItems.filter(f => f.product_id || f.productId) : [];
 
           const statements = [
             db.prepare(`
@@ -477,8 +464,7 @@ export default {
             success: true,
             id,
             plastic_bag_cost: plasticBagCost,
-            bag_deductions: bagDeductions,
-            material_deductions: materialDeductions
+            bag_deductions: bagDeductions
           }, 201);
         }
       }
@@ -858,6 +844,45 @@ export default {
         if (method === "GET") {
           const { results } = await db.prepare("SELECT * FROM categories").all();
           return jsonResponse(results);
+        }
+      }
+
+      // ----------------------------------------------------
+      // APP SETTINGS API
+      // ----------------------------------------------------
+      if (path === "/api/settings") {
+        if (method === "GET") {
+          const { results } = await db.prepare("SELECT * FROM app_settings").all();
+          const settings = {};
+          results.forEach(row => { settings[row.key] = row.value; });
+          return jsonResponse(settings);
+        }
+        if (method === "PUT") {
+          const body = await request.json();
+          for (const [key, value] of Object.entries(body)) {
+            await db.prepare(`
+              INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+            `).bind(key, String(value)).run();
+          }
+          return jsonResponse({ success: true });
+        }
+      }
+
+      if (path.startsWith("/api/settings/")) {
+        const key = path.split("/").pop();
+        if (method === "GET") {
+          const row = await db.prepare("SELECT * FROM app_settings WHERE key = ?").bind(key).first();
+          return jsonResponse(row ? { key: row.key, value: row.value } : { key, value: null });
+        }
+        if (method === "PUT") {
+          const body = await request.json();
+          const value = body.value !== undefined ? String(body.value) : '';
+          await db.prepare(`
+            INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+          `).bind(key, value).run();
+          return jsonResponse({ success: true });
         }
       }
 

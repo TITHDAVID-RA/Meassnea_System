@@ -1,7 +1,38 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useGenerators } from '@/composables/useGenerators'
 import { api } from '@/api/client' // Import central D1 API client
+
+// --- localStorage helper with Date revival and SSR safety ---
+function useLocalStorage(key, defaultValue) {
+  // SSR-safe: only access localStorage in browser
+  const isClient = typeof window !== 'undefined'
+
+  const reviveDates = (data) => {
+    if (Array.isArray(data)) {
+      return data.map(item => {
+        const revived = { ...item }
+        if (item.date && typeof item.date === 'string') revived.date = new Date(item.date)
+        if (item.createdAt && typeof item.createdAt === 'string') revived.createdAt = new Date(item.createdAt)
+        if (item.updatedAt && typeof item.updatedAt === 'string') revived.updatedAt = new Date(item.updatedAt)
+        return revived
+      })
+    }
+    return data
+  }
+
+  const stored = isClient ? localStorage.getItem(key) : null
+  const parsed = stored ? reviveDates(JSON.parse(stored)) : defaultValue
+  const data = ref(parsed)
+
+  if (isClient) {
+    watch(data, (newVal) => {
+      localStorage.setItem(key, JSON.stringify(newVal))
+    }, { deep: true })
+  }
+
+  return data
+}
 
 const defaultStockCategories = []
 
@@ -62,13 +93,13 @@ function getSizeFromProductName(name) {
 export const useStockStore = defineStore('stock', () => {
   const { generateId } = useGenerators()
 
-  // Replace browser useStorage offline states with reactive ref states
+  // Use localStorage fallback when API is unavailable
   const stockItems = ref([])
   const stockCategories = ref(defaultStockCategories)
-  const materialTransactions = ref([])
+  const materialTransactions = useLocalStorage('stock_material_transactions', [])
 
-  // teaPricePerGram continues to write locally to save persistent settings
-  const teaPricePerGram = ref(Number(localStorage.getItem('teaPricePerGram')) || 0)
+  // teaPricePerGram persisted in D1 via API, with localStorage fallback
+  const teaPricePerGram = useLocalStorage('stock_tea_price_per_gram', 0)
 
   // --- Computed States ---
   const totalProducts = computed(() => stockItems.value.length)
@@ -117,12 +148,29 @@ export const useStockStore = defineStore('stock', () => {
   /**
    * Loads product information and material ledger logs directly from Cloudflare D1
    */
+  async function fetchSettings() {
+    try {
+      const settings = await api.get('/settings');
+      if (settings && settings.tea_price_per_gram !== undefined) {
+        teaPricePerGram.value = Number(settings.tea_price_per_gram) || 0;
+        localStorage.setItem('stock_tea_price_per_gram', JSON.stringify(teaPricePerGram.value))
+      }
+    } catch (error) {
+      console.warn('Failed to load settings from D1:', error);
+      // localStorage fallback already handled by useLocalStorage
+    }
+  }
+
   async function fetchStockData() {
     try {
+      // Load settings alongside stock data
       const [products, transactions] = await Promise.all([
         api.get('/products'),
         api.get('/material-transactions')
-      ])
+      ]);
+
+      // Also fetch settings in parallel (don't block on failure)
+      fetchSettings().catch(() => {});
 
       // Map snake_case columns back to your local camelCase states
       stockItems.value = products.map(p => ({
@@ -139,20 +187,31 @@ export const useStockStore = defineStore('stock', () => {
         updatedAt: p.updated_at ? new Date(p.updated_at) : new Date()
       }))
 
-      materialTransactions.value = transactions.map(tx => ({
-        id: tx.id,
-        materialId: tx.material_id,
-        materialName: tx.material_name,
-        size: tx.size,
-        quantity: tx.quantity,
-        unitPrice: tx.unit_price,
-        totalPrice: tx.total_price,
-        type: tx.type,
-        date: tx.transaction_date ? new Date(tx.transaction_date) : new Date(tx.created_at),
-        notes: tx.notes || '',
-        hidden: tx.hidden || false,
-        createdAt: tx.created_at ? new Date(tx.created_at) : new Date()
-      }))
+      // Merge API data with localStorage data (API takes precedence for same ID)
+      const apiTxMap = new Map()
+      transactions.forEach(tx => {
+        apiTxMap.set(tx.id, {
+          id: tx.id,
+          materialId: tx.material_id,
+          materialName: tx.material_name,
+          size: tx.size,
+          quantity: tx.quantity,
+          unitPrice: tx.unit_price,
+          totalPrice: tx.total_price,
+          type: tx.type,
+          date: tx.transaction_date ? new Date(tx.transaction_date) : new Date(tx.created_at),
+          notes: tx.notes || '',
+          hidden: tx.hidden || false,
+          createdAt: tx.created_at ? new Date(tx.created_at) : new Date()
+        })
+      })
+
+      // Keep local transactions that aren't in API yet (offline/queued)
+      const localTxs = materialTransactions.value.filter(tx => !apiTxMap.has(tx.id))
+      materialTransactions.value = [...localTxs, ...apiTxMap.values()]
+
+      // Persist merged data
+      localStorage.setItem('stock_material_transactions', JSON.stringify(materialTransactions.value))
     } catch (error) {
       console.error('Failed to load stock data from Cloudflare D1:', error)
       throw error
@@ -161,13 +220,20 @@ export const useStockStore = defineStore('stock', () => {
 
   // --- Material Cost Calculation ---
   function getTeaPricePerGram() {
+    // Returns price per 100g (stored as per-gram rate, multiply by 100)
     return (Number(teaPricePerGram.value) || 0) * 100;
   }
 
-  function setTeaPricePerGram(pricePer100g) {
+  async function setTeaPricePerGram(pricePer100g) {
     const rate = (Number(pricePer100g) || 0) / 100;
     teaPricePerGram.value = rate;
-    localStorage.setItem('teaPricePerGram', rate.toString());
+    localStorage.setItem('stock_tea_price_per_gram', JSON.stringify(rate))
+    try {
+      await api.put('/settings/tea_price_per_gram', { value: rate.toString() });
+    } catch (e) {
+      console.error('Failed to save tea price to API (saved locally):', e);
+      // Don't throw - localStorage has the value
+    }
   }
 
   function getMaterialUnitCost(materialName, size = 'N/A') {
@@ -296,8 +362,8 @@ export const useStockStore = defineStore('stock', () => {
 
         // Total តែ out transactions for this size
         const teaOutTotal = materialTransactions.value
-          .filter(tx => tx.type === 'out' && tx.materialName === 'តែ' && tx.size === size)
-          .reduce((sum, tx) => sum + tx.quantity, 0)
+          .filter(tx => (tx.type === 'out' || tx.type === 'deduction') && tx.materialName === 'តែ' && tx.size === size)
+          .reduce((sum, tx) => sum + Math.abs(tx.quantity), 0)
 
         // Total តែ in transactions for this size (returns from product deletion)
         const teaInTotal = materialTransactions.value
@@ -330,7 +396,7 @@ export const useStockStore = defineStore('stock', () => {
     materialTransactions.value.forEach(tx => {
       if (tx.materialName === materialName && tx.size === size) {
         if (tx.type === 'in') totalIn += tx.quantity
-        else if (tx.type === 'out') totalOut += tx.quantity
+        else if (tx.type === 'out' || tx.type === 'deduction') totalOut += Math.abs(tx.quantity)
       }
     })
     return totalIn - totalOut
@@ -344,7 +410,7 @@ export const useStockStore = defineStore('stock', () => {
     // Find matching out transactions for this material + product
     const txIndices = []
     materialTransactions.value.forEach((tx, index) => {
-      if (tx.type === 'out' && 
+      if ((tx.type === 'out' || tx.type === 'deduction') && 
           tx.materialName === materialName && 
           tx.size === size &&
           tx.quantity > 0 &&
@@ -389,7 +455,7 @@ export const useStockStore = defineStore('stock', () => {
         const shortageList = shortages.map(s => 
           `- ${s.material}${s.size !== 'N/A' ? ' (' + s.size + ')' : ''}: ត្រូវការ ${s.needed}${s.unit || ''} មានតែ ${s.available}${s.unit || ''}`
         ).join('\n')
-        throw new Error(`MATERIAL_SHORTAGE\n${shortageList}`)
+        throw new Error('MATERIAL_SHORTAGE\n' + shortageList)
       }
 
       let calculatedCostPrice = productData.costPrice || 0
@@ -857,10 +923,10 @@ export const useStockStore = defineStore('stock', () => {
 
     // Get all 'out' transactions for this material+size
     const outTransactions = materialTransactions.value
-      .filter(t => t.type === 'out' && t.materialName === tx.materialName && t.size === tx.size)
+      .filter(t => (t.type === 'out' || t.type === 'deduction') && t.materialName === tx.materialName && t.size === tx.size)
 
     // Calculate total out quantity
-    const totalOut = outTransactions.reduce((sum, t) => sum + t.quantity, 0)
+    const totalOut = outTransactions.reduce((sum, t) => sum + Math.abs(t.quantity), 0)
 
     // Calculate cumulative in quantities to find where this transaction sits
     let cumulativeIn = 0
@@ -964,6 +1030,7 @@ export const useStockStore = defineStore('stock', () => {
     getMaterialPriceLabel,
     getTeaPricePerGram,
     setTeaPricePerGram,
+    fetchSettings,
     recalculateProductCostsByMaterial,
     ALLOWED_PRODUCTS,
     ALLOWED_MATERIALS,

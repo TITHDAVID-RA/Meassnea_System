@@ -184,15 +184,16 @@ const materialGroups = computed(() => {
 
   // Calculate balance by subtracting out transactions (skip labor - price only)
   // Exclude transactions with quantity 0 (cancelled/returned orders)
+  // Handle both 'out' and 'deduction' types, normalize quantity to positive
   stockStore.materialTransactions
-    .filter((tx) => tx.type === 'out' && tx.materialName !== 'ពលកម្ម' && tx.quantity > 0)
+    .filter((tx) => (tx.type === 'out' || tx.type === 'deduction') && tx.materialName !== 'ពលកម្ម' && Math.abs(tx.quantity) > 0)
     .forEach((tx) => {
       const khmerName = getKhmerMaterialName(tx.materialName)
       const group = groups[khmerName]
       if (group) {
         const sizeKey = tx.size || 'N/A'
         if (group.sizes[sizeKey]) {
-          group.sizes[sizeKey].totalOut += tx.quantity
+          group.sizes[sizeKey].totalOut += Math.abs(tx.quantity)
         }
       }
     })
@@ -207,53 +208,55 @@ const materialGroups = computed(() => {
 
   // Add derived តែ (tea) group calculated from ទាបបារាំង
   // 1kg ទាបបារាំង = 150g តែ, display in grams with user-input price per gram
+
+  // Calculate តែ out transactions (from product creation) in grams
+  // Handle both 'out' (frontend) and 'deduction' (backend order) types
+  let teaGramsTotalOut = 0
+  stockStore.materialTransactions
+    .filter((tx) => (tx.type === 'out' || tx.type === 'deduction') && tx.materialName === 'តែ')
+    .forEach((tx) => {
+      teaGramsTotalOut += Math.abs(tx.quantity)
+    })
+
+  // Calculate តែ in transactions (from product deletion returns) in grams
+  let teaGramsTotalIn = 0
+  stockStore.materialTransactions
+    .filter((tx) => tx.type === 'in' && tx.materialName === 'តែ')
+    .forEach((tx) => {
+      teaGramsTotalIn += tx.quantity
+    })
+
   const teaPowderGroup = groups['ទាបបារាំង']
-  if (teaPowderGroup) {
-    const naSize = teaPowderGroup.sizes['N/A']
-    if (naSize) {
-      // Calculate តែ out transactions (from product creation) in grams
-      let teaGramsTotalOut = 0
-      stockStore.materialTransactions
-        .filter((tx) => tx.type === 'out' && tx.materialName === 'តែ')
-        .forEach((tx) => {
-          teaGramsTotalOut += tx.quantity
-        })
+  const naSize = teaPowderGroup?.sizes?.['N/A']
 
-      // Calculate តែ in transactions (from product deletion returns) in grams
-      let teaGramsTotalIn = 0
-      stockStore.materialTransactions
-        .filter((tx) => tx.type === 'in' && tx.materialName === 'តែ')
-        .forEach((tx) => {
-          teaGramsTotalIn += tx.quantity
-        })
+  // Convert ទាបបារាំង kg to តែ grams: 1kg = 150g
+  const teaPowderGramsTotalIn = (naSize?.totalIn || 0) * stockStore.TEA_POWDER_TO_TEA_GRAMS
+  const teaGramsBalance = teaPowderGramsTotalIn - teaGramsTotalOut + teaGramsTotalIn
 
-      // Convert ទាបបារាំង kg to តែ grams: 1kg = 150g
-      const teaPowderGramsTotalIn = naSize.totalIn * stockStore.TEA_POWDER_TO_TEA_GRAMS
-      const teaGramsBalance = teaPowderGramsTotalIn - teaGramsTotalOut + teaGramsTotalIn
+  // Use user-input price per gram
+  const userTeaPricePerGram = stockStore.getTeaPricePerGram()
 
-      // Use user-input price per gram
-      const userTeaPricePerGram = stockStore.getTeaPricePerGram()
-
-      groups['តែ'] = {
-        materialName: 'តែ',
-        originalName: 'tea',
-        sizes: {
-          'N/A': {
-            size: 'N/A',
-            totalIn: teaPowderGramsTotalIn + teaGramsTotalIn,
-            totalOut: teaGramsTotalOut,
-            balance: teaGramsBalance,
-            totalSpent: naSize.totalSpent,
-            transactions: [],
-            isDerived: true,
-            teaPricePerGram: userTeaPricePerGram,
-          },
+  // Always show តែ group if there's any data or if tea price is set
+  if (teaPowderGramsTotalIn > 0 || teaGramsTotalOut > 0 || teaGramsTotalIn > 0 || userTeaPricePerGram > 0) {
+    groups['តែ'] = {
+      materialName: 'តែ',
+      originalName: 'tea',
+      sizes: {
+        'N/A': {
+          size: 'N/A',
+          totalIn: teaPowderGramsTotalIn + teaGramsTotalIn,
+          totalOut: teaGramsTotalOut,
+          balance: teaGramsBalance,
+          totalSpent: naSize?.totalSpent || 0,
+          transactions: [],
+          isDerived: true,
+          teaPricePerGram: userTeaPricePerGram,
         },
-        totalQty: teaPowderGramsTotalIn + teaGramsTotalIn,
-        totalValue: naSize.totalSpent,
-        latestDate: teaPowderGroup.latestDate,
-        isDerived: true,
-      }
+      },
+      totalQty: teaPowderGramsTotalIn + teaGramsTotalIn,
+      totalValue: naSize?.totalSpent || 0,
+      latestDate: teaPowderGroup?.latestDate || new Date(),
+      isDerived: true,
     }
   }
 

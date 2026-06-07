@@ -59,7 +59,7 @@ INSERT OR IGNORE INTO materials (id, name, name_khmer, type, unit, size, quantit
   ('mat_sticker_l', 'sticker', 'ស្ទីកគ័រ', 'sized', 'unit', 'L', 0, 0, 0),
   ('mat_6', 'tea_powder', 'ទាបបារាំង', 'kg', 'kg', 'N/A', 0, 0, 0),
   ('mat_7', 'labor', 'ពលកម្ម', 'labor', 'unit', 'N/A', 0, 0, 1),
-  ('mat_8', 'tea', 'តែ', 'derived', 'kg', 'N/A', 0, 0, 0);
+  ('mat_8', 'tea', 'តែ', 'derived', 'g', 'N/A', NULL, 0, 0);
 
 -- Material Transactions
 CREATE TABLE IF NOT EXISTS material_transactions (
@@ -239,3 +239,12 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
 );
 
 CREATE INDEX IF NOT EXISTS idx_po_status ON purchase_orders(status);
+-- App Settings / Configuration
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Default tea price per gram (stored as rate per gram)
+INSERT OR IGNORE INTO app_settings (key, value) VALUES ('tea_price_per_gram', '0');

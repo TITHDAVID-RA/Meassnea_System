@@ -61,7 +61,7 @@ var src_default = {
       await env.meassnea_db.prepare(`
         INSERT INTO material_transactions (id, material_id, material_name, size, quantity, unit_price, total_price, type, notes, transaction_date)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(txId, material.id, "plastic_bag", size, -qty, material.unit_price, -(qty * material.unit_price), "deduction", `Order ${orderNumber}`, (/* @__PURE__ */ new Date()).toISOString()).run();
+      `).bind(txId, material.id, "plastic_bag", size, qty, material.unit_price, qty * material.unit_price, "out", `Order ${orderNumber}`, (/* @__PURE__ */ new Date()).toISOString()).run();
       return { material_id: material.id, previous_quantity: material.quantity, new_quantity: newQty };
     }, "deductPlasticBag");
     const returnPlasticBag = /* @__PURE__ */ __name(async (size, qty, orderNumber) => {
@@ -131,18 +131,13 @@ var src_default = {
       }
       const gramsFactor = TEA_GRAMS_PER_SIZE[product.size] || 0;
       if (gramsFactor > 0) {
-        let teaMaterial = await env.meassnea_db.prepare("SELECT * FROM materials WHERE name = 'tea' LIMIT 1").first();
-        if (teaMaterial) {
-          const totalGramsDeducted = gramsFactor * quantity;
-          const newQty = teaMaterial.quantity - totalGramsDeducted;
-          await env.meassnea_db.prepare("UPDATE materials SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(newQty, teaMaterial.id).run();
-          const txId = crypto.randomUUID();
-          await env.meassnea_db.prepare(`
-            INSERT INTO material_transactions (id, material_id, material_name, size, quantity, unit_price, total_price, type, notes, transaction_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).bind(txId, teaMaterial.id, "\u178F\u17C2", product.size, -totalGramsDeducted, teaMaterial.unit_price, -(totalGramsDeducted * teaMaterial.unit_price), "deduction", `Order ${orderNumber} - ${totalGramsDeducted}g`, (/* @__PURE__ */ new Date()).toISOString()).run();
-          deductions.push({ material_id: teaMaterial.id, name: "\u178F\u17C2", new_quantity: newQty });
-        }
+        const totalGramsDeducted = gramsFactor * quantity;
+        const txId = crypto.randomUUID();
+        await env.meassnea_db.prepare(`
+          INSERT INTO material_transactions (id, material_id, material_name, size, quantity, unit_price, total_price, type, notes, transaction_date)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(txId, "mat_8", "\u178F\u17C2", product.size, totalGramsDeducted, 0, 0, "out", `Order ${orderNumber} - ${product.name} x${quantity} (${totalGramsDeducted}g \u178F\u17C2)`, (/* @__PURE__ */ new Date()).toISOString()).run();
+        deductions.push({ material_id: "mat_8", name: "\u178F\u17C2", new_quantity: null });
       }
       return deductions;
     }, "deductProductMaterials");
@@ -320,17 +315,15 @@ var src_default = {
               if (res) bagDeductions.push({ size: bag.size, qty, ...res });
             }
           }
-          const materialDeductions = [];
-          if (Array.isArray(items)) {
-            for (const item of items) {
-              const pId = getVal(item, "productId", "product_id", null);
-              const qty = getNum(item, "quantity", "quantity", 1);
-              if (pId) {
-                const deductions = await deductProductMaterials(pId, qty, order_number);
-                materialDeductions.push(...deductions);
-              }
+          let rawFreeItems = body.freeItems || body.free_items || [];
+          if (typeof rawFreeItems === "string") {
+            try {
+              rawFreeItems = JSON.parse(rawFreeItems);
+            } catch (e) {
+              rawFreeItems = [];
             }
           }
+          const validatedFreeItems = Array.isArray(rawFreeItems) ? rawFreeItems.filter((f) => f.product_id || f.productId) : [];
           for (const item of validatedFreeItems) {
             const pId = item.product_id || item.productId;
             const qty = Number(item.quantity || 1);
@@ -351,20 +344,11 @@ var src_default = {
               await db.prepare("UPDATE materials SET quantity = ? WHERE id = ?").bind(boxMat.quantity - case_box_qty, boxMat.id).run();
               await db.prepare(`
                 INSERT INTO material_transactions (id, material_name, size, quantity, type, notes)
-                VALUES (?, '\u1780\u17C1\u179F', 'N/A', ?, 'deduction', ?)
-              `).bind(crypto.randomUUID(), -case_box_qty, `Order ${order_number}`).run();
+                VALUES (?, '\u1780\u17C1\u179F', 'N/A', ?, 'out', ?)
+              `).bind(crypto.randomUUID(), case_box_qty, `Order ${order_number}`).run();
             }
           }
           const plasticBagCost = await calculatePlasticBagCost(validatedBags.map((b) => ({ size: b.size, qty: Number(b.qty || b.quantity || 0) })));
-          let rawFreeItems = body.freeItems || body.free_items || [];
-          if (typeof rawFreeItems === "string") {
-            try {
-              rawFreeItems = JSON.parse(rawFreeItems);
-            } catch (e) {
-              rawFreeItems = [];
-            }
-          }
-          const validatedFreeItems = Array.isArray(rawFreeItems) ? rawFreeItems.filter((f) => f.product_id || f.productId) : [];
           const statements = [
             db.prepare(`
               INSERT INTO orders (id, order_number, customer, total, delivery_cost, plastic_bags, plastic_bag_cost, case_box_qty, free_items, payment_method, status, order_date)
@@ -406,8 +390,7 @@ var src_default = {
             success: true,
             id,
             plastic_bag_cost: plasticBagCost,
-            bag_deductions: bagDeductions,
-            material_deductions: materialDeductions
+            bag_deductions: bagDeductions
           }, 201);
         }
       }
@@ -726,6 +709,42 @@ var src_default = {
           return jsonResponse(results);
         }
       }
+      if (path === "/api/settings") {
+        if (method === "GET") {
+          const { results } = await db.prepare("SELECT * FROM app_settings").all();
+          const settings = {};
+          results.forEach((row) => {
+            settings[row.key] = row.value;
+          });
+          return jsonResponse(settings);
+        }
+        if (method === "PUT") {
+          const body = await request.json();
+          for (const [key, value] of Object.entries(body)) {
+            await db.prepare(`
+              INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+            `).bind(key, String(value)).run();
+          }
+          return jsonResponse({ success: true });
+        }
+      }
+      if (path.startsWith("/api/settings/")) {
+        const key = path.split("/").pop();
+        if (method === "GET") {
+          const row = await db.prepare("SELECT * FROM app_settings WHERE key = ?").bind(key).first();
+          return jsonResponse(row ? { key: row.key, value: row.value } : { key, value: null });
+        }
+        if (method === "PUT") {
+          const body = await request.json();
+          const value = body.value !== void 0 ? String(body.value) : "";
+          await db.prepare(`
+            INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+          `).bind(key, value).run();
+          return jsonResponse({ success: true });
+        }
+      }
       return jsonResponse({ error: "Endpoint or Method not found" }, 404);
     } catch (err) {
       console.error("[SERVER ERROR]", { path, method, error: err.message });
@@ -775,7 +794,7 @@ var jsonError = /* @__PURE__ */ __name(async (request, env, _ctx, middlewareCtx)
 }, "jsonError");
 var middleware_miniflare3_json_error_default = jsonError;
 
-// .wrangler/tmp/bundle-UbYOQ0/middleware-insertion-facade.js
+// .wrangler/tmp/bundle-0k3OhY/middleware-insertion-facade.js
 var __INTERNAL_WRANGLER_MIDDLEWARE__ = [
   middleware_ensure_req_body_drained_default,
   middleware_miniflare3_json_error_default
@@ -807,7 +826,7 @@ function __facade_invoke__(request, env, ctx, dispatch, finalMiddleware) {
 }
 __name(__facade_invoke__, "__facade_invoke__");
 
-// .wrangler/tmp/bundle-UbYOQ0/middleware-loader.entry.ts
+// .wrangler/tmp/bundle-0k3OhY/middleware-loader.entry.ts
 var __Facade_ScheduledController__ = class ___Facade_ScheduledController__ {
   constructor(scheduledTime, cron, noRetry) {
     this.scheduledTime = scheduledTime;

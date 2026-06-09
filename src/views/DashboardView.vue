@@ -190,13 +190,28 @@ function clearFilters() {
         bg-class="bg-danger"
       />
       <StatCard
-        icon="fas fa-shopping-basket"
-        label="ចំនួនការកម្មង់ (ជោគជ័យ)"
-        :value="totalOrderCount"
-        bg-class="bg-warning"
+      icon="fas fa-shopping-basket"
+      label="ចំនួនការកម្មង់ (ជោគជ័យ)"
+      :value="totalOrderCount"
+      bg-class="bg-warning"
       />
     </div>
-
+    <div class="stats-grid">
+      <StatCard icon="fas fa-box" label="ស្តុក S (តូច)" :value="stockBySize.S" bg-class="bg-info" />
+      <StatCard
+        icon="fas fa-box-open"
+        label="ស្តុក M (មធ្យម)"
+        :value="stockBySize.M"
+        bg-class="bg-primary"
+      />
+      <StatCard
+        icon="fas fa-boxes-stacked"
+        label="ស្តុក L (ធំ)"
+        :value="stockBySize.L"
+        bg-class="bg-secondary"
+      />
+    </div>
+    
     <!-- Sold Products: Unified Cards (Count + Cost + Total in one) -->
     <div class="stats-grid sold-grid">
       <!-- S Card -->
@@ -341,21 +356,6 @@ function clearFilters() {
       </div>
     </div>
 
-    <div class="stats-grid">
-      <StatCard icon="fas fa-box" label="ស្តុក S (តូច)" :value="stockBySize.S" bg-class="bg-info" />
-      <StatCard
-        icon="fas fa-box-open"
-        label="ស្តុក M (មធ្យម)"
-        :value="stockBySize.M"
-        bg-class="bg-primary"
-      />
-      <StatCard
-        icon="fas fa-boxes-stacked"
-        label="ស្តុក L (ធំ)"
-        :value="stockBySize.L"
-        bg-class="bg-secondary"
-      />
-    </div>
   </div>
 </template>
 

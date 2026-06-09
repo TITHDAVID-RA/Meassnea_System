@@ -114,15 +114,17 @@ function getProductBreakdown(order) {
   const freeItemsList = (order.freeItems || []).map(item => {
     const size = stockStore.getSizeFromProductName(item.name || item.productName)
     const qty = Number(item.quantity || 0)
+    const costPrice = Number(item.costPrice || 0)
+    const totalCost = qty * costPrice
     return {
       name: `${item.name || item.productName || 'ផលិតផល'} (ឥតគិតថ្លៃ)`,
       size: size || 'N/A',
       quantity: qty,
       unitPrice: 0,
-      costPrice: 0,
+      costPrice: costPrice,
       totalPrice: 0,
-      totalCost: 0,
-      profit: 0,
+      totalCost: totalCost,
+      profit: -totalCost,
       isFree: true
     }
   })

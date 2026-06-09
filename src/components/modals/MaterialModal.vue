@@ -16,6 +16,9 @@ const notes = ref('')
 // តែ price per gram (user input, stored in stockStore)
 const teaPricePerGram = ref(stockStore.getTeaPricePerGram())
 
+// Track original last prices to detect price-only changes
+const originalLastPrices = ref({})
+
 // Material configuration: name, hasSize, onlyPrice (no qty, just unit price)
 const materialConfig = [
   { key: 'plasticBag', name: 'ថង់', hasSize: true, onlyPrice: false, sizes: ['S', 'M'] },
@@ -55,18 +58,18 @@ function formatMoney(value) {
   if (value === 0 || value === null || value === undefined) return '0'
   const num = Number(value)
   if (isNaN(num)) return '0'
-  
+
   // Round to 4 decimal places using proper rounding
   const rounded = Math.round(num * 10000) / 10000
-  
+
   // Convert to string and trim trailing zeros
   let str = rounded.toString()
-  
+
   // If it's in scientific notation, fall back to toFixed
   if (str.includes('e')) {
     str = rounded.toFixed(4).replace(/\.?0+$/, '')
   }
-  
+
   return str
 }
 
@@ -103,7 +106,9 @@ watch(
       teaPricePerGram.value = stockStore.getTeaPricePerGram()
 
       // Build form data with pre-filled prices from last purchase (តម្លៃចុងក្រោយ)
+      // Also track original last prices for detecting price-only changes
       const obj = {}
+      const origPrices = {}
       materialConfig.forEach((mat) => {
         obj[mat.key] = {}
         if (mat.hasSize) {
@@ -115,6 +120,7 @@ watch(
               qty: 0,
               price: lastPrice > 0 ? Number(lastPrice.toFixed(4)) : 0,
             }
+            origPrices[`${mat.name}|${size}`] = lastPrice
           })
         } else {
           const lastPrice = stockStore.getLastMaterialPrice(mat.name, 'N/A')
@@ -122,9 +128,11 @@ watch(
             qty: 0,
             price: lastPrice > 0 ? Number(lastPrice.toFixed(4)) : 0,
           }
+          origPrices[`${mat.name}|N/A`] = lastPrice
         }
       })
       formData.value = obj
+      originalLastPrices.value = origPrices
 
       // Ensure DOM updates with the new values
       await nextTick()
@@ -154,38 +162,47 @@ const grandTotal = computed(() => {
   return total
 })
 
-function submit() {
-  if (!hasAnyData.value) {
-    alert('សូមបញ្ចូលចំនួនយ៉ាងតិចមួយ')
-    return
-  }
-
+async function submit() {
   const entries = []
+  const priceUpdates = []
+
   materialConfig.forEach((mat) => {
     const sizes = formData.value[mat.key]
     Object.entries(sizes).forEach(([size, data]) => {
+      const origPrice = originalLastPrices.value[`${mat.name}|${size}`] || 0
+      const currentPrice = Number(data.price) || 0
+      const currentQty = Number(data.qty) || 0
+
       if (mat.onlyPrice) {
         // Labor: only price, quantity always 1 per unit
-        if ((data.price || 0) > 0) {
+        if (currentPrice > 0) {
           entries.push({
             materialName: mat.name,
             size: size,
             quantity: 1,
-            unitPrice: Number(data.price) || 0,
-            totalPrice: Number(data.price) || 0,
+            unitPrice: currentPrice,
+            totalPrice: currentPrice,
             date: new Date(date.value),
             notes: notes.value,
           })
         }
-      } else if ((data.qty || 0) > 0) {
+      } else if (currentQty > 0) {
+        // Quantity entered → create new transaction
         entries.push({
           materialName: mat.name,
           size: size,
-          quantity: Number(data.qty),
-          unitPrice: Number(data.price) || 0,
-          totalPrice: Number(data.qty) * (Number(data.price) || 0),
+          quantity: currentQty,
+          unitPrice: currentPrice,
+          totalPrice: currentQty * currentPrice,
           date: new Date(date.value),
           notes: notes.value,
+        })
+      } else if (currentPrice !== origPrice && origPrice > 0) {
+        // Price changed but no quantity → update last transaction price
+        priceUpdates.push({
+          materialName: mat.name,
+          size: size,
+          newUnitPrice: currentPrice,
         })
       }
     })
@@ -193,6 +210,32 @@ function submit() {
 
   // Save តែ price per gram to stockStore
   stockStore.setTeaPricePerGram(teaPricePerGram.value)
+
+  // Apply price-only updates to the most recent 'in' transaction for each material+size
+  for (const update of priceUpdates) {
+    try {
+      // Find the most recent 'in' transaction for this material+size
+      const txs = stockStore.materialTransactions
+        .filter(tx => 
+          tx.type === 'in' && 
+          tx.materialName === update.materialName && 
+          tx.size === update.size &&
+          tx.quantity > 0
+        )
+        .sort((a, b) => new Date(b.date) - new Date(a.date))
+
+      if (txs.length > 0) {
+        const lastTx = txs[0]
+        const newTotalPrice = lastTx.quantity * update.newUnitPrice
+        await stockStore.updateMaterialTransaction(lastTx.id, {
+          unitPrice: update.newUnitPrice,
+          totalPrice: newTotalPrice,
+        })
+      }
+    } catch (error) {
+      console.error(`Failed to update price for ${update.materialName} ${update.size}:`, error)
+    }
+  }
 
   emit('save', {
     date: new Date(date.value),

@@ -178,10 +178,18 @@ export const useOrderStore = defineStore('orders', () => {
           )
 
           const deliveryCost = Number(orderData.deliveryCost !== undefined ? orderData.deliveryCost : (orderData.delivery_cost || 0))
-          const totalCostPrice = orderData.items.reduce(
+
+          const itemsCostPrice = orderData.items.reduce(
             (sum, item) => sum + (Number(item.costPrice || item.cost_price || 0) * Number(item.quantity || 1)),
             0
           )
+
+          const freeItemsCostPrice = (orderData.freeItems || []).reduce(
+            (sum, item) => sum + (Number(item.costPrice || item.cost_price || 0) * Number(item.quantity || 1)),
+            0
+          )
+
+          const totalCostPrice = itemsCostPrice + freeItemsCostPrice
 
           const plasticBags = orderData.plasticBags || []
           const caseBoxQty = Number(orderData.caseBoxQty !== undefined ? orderData.caseBoxQty : (orderData.case_box_qty || 0))

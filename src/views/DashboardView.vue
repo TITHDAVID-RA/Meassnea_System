@@ -77,6 +77,58 @@ const soldBySize = computed(() => {
   return counts
 })
 
+// --- Free Product Count by Size ---
+const freeBySize = computed(() => {
+  const counts = { S: 0, M: 0, L: 0 }
+
+  filteredOrders.value.forEach(order => {
+    order.freeItems?.forEach(item => {
+      const size = stockStore.getSizeFromProductName(item.name || item.productName)
+      if (size && counts[size] !== undefined) {
+        counts[size] += Number(item.quantity || 0)
+      }
+    })
+  })
+
+  return counts
+})
+
+// --- Sold Product Cost by Size (តម្លៃដើម) ---
+const soldCostBySize = computed(() => {
+  const costs = { S: 0, M: 0, L: 0 }
+
+  filteredOrders.value.forEach(order => {
+    order.items?.forEach(item => {
+      const size = stockStore.getSizeFromProductName(item.name || item.productName)
+      if (size && costs[size] !== undefined) {
+        const qty = Number(item.quantity || 0)
+        const costPrice = Number(item.costPrice || item.cost_price || 0)
+        costs[size] += qty * costPrice
+      }
+    })
+  })
+
+  return costs
+})
+
+// --- Free Product Cost by Size (តម្លៃដើមឥតគិតថ្លៃ) ---
+const freeCostBySize = computed(() => {
+  const costs = { S: 0, M: 0, L: 0 }
+
+  filteredOrders.value.forEach(order => {
+    order.freeItems?.forEach(item => {
+      const size = stockStore.getSizeFromProductName(item.name || item.productName)
+      if (size && costs[size] !== undefined) {
+        const qty = Number(item.quantity || 0)
+        const costPrice = Number(item.costPrice || item.cost_price || 0)
+        costs[size] += qty * costPrice
+      }
+    })
+  })
+
+  return costs
+})
+
 const stockBySize = computed(() => {
   const sizes = { S: 0, M: 0, L: 0 }
   stockStore.stockItems.forEach((item) => {
@@ -145,25 +197,148 @@ function clearFilters() {
       />
     </div>
 
+    <!-- Sold Products: Unified Cards (Count + Cost + Total in one) -->
     <div class="stats-grid sold-grid">
-      <StatCard
-        icon="fas fa-box"
-        label="S (តូច) បានលក់"
-        :value="soldBySize.S"
-        bg-class="bg-info"
-      />
-      <StatCard
-        icon="fas fa-box-open"
-        label="M (មធ្យម) បានលក់"
-        :value="soldBySize.M"
-        bg-class="bg-primary"
-      />
-      <StatCard
-        icon="fas fa-boxes-stacked"
-        label="L (ធំ) បានលក់"
-        :value="soldBySize.L"
-        bg-class="bg-secondary"
-      />
+      <!-- S Card -->
+      <div class="unified-card bg-info">
+        <div class="card-header">
+          <i class="fas fa-box"></i>
+          <span class="size-label">S (តូច)</span>
+          <span class="badge-sold">បានលក់</span>
+        </div>
+        <div class="card-body">
+          <div class="metric-row">
+            <span class="metric-label">ចំនួន</span>
+            <span class="metric-value">{{ soldBySize.S }}</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">តម្លៃដើម/ឯកតា</span>
+            <span class="metric-value">{{ formatCurrency(soldBySize.S > 0 ? soldCostBySize.S / soldBySize.S : 0) }}</span>
+          </div>
+          <div class="metric-row total-row">
+            <span class="metric-label">តម្លៃដើមសរុប</span>
+            <span class="metric-value total">{{ formatCurrency(soldCostBySize.S) }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- M Card -->
+      <div class="unified-card bg-primary">
+        <div class="card-header">
+          <i class="fas fa-box-open"></i>
+          <span class="size-label">M (មធ្យម)</span>
+          <span class="badge-sold">បានលក់</span>
+        </div>
+        <div class="card-body">
+          <div class="metric-row">
+            <span class="metric-label">ចំនួន</span>
+            <span class="metric-value">{{ soldBySize.M }}</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">តម្លៃដើម/ឯកតា</span>
+            <span class="metric-value">{{ formatCurrency(soldBySize.M > 0 ? soldCostBySize.M / soldBySize.M : 0) }}</span>
+          </div>
+          <div class="metric-row total-row">
+            <span class="metric-label">តម្លៃដើមសរុប</span>
+            <span class="metric-value total">{{ formatCurrency(soldCostBySize.M) }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- L Card -->
+      <div class="unified-card bg-secondary">
+        <div class="card-header">
+          <i class="fas fa-boxes-stacked"></i>
+          <span class="size-label">L (ធំ)</span>
+          <span class="badge-sold">បានលក់</span>
+        </div>
+        <div class="card-body">
+          <div class="metric-row">
+            <span class="metric-label">ចំនួន</span>
+            <span class="metric-value">{{ soldBySize.L }}</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">តម្លៃដើម/ឯកតា</span>
+            <span class="metric-value">{{ formatCurrency(soldBySize.L > 0 ? soldCostBySize.L / soldBySize.L : 0) }}</span>
+          </div>
+          <div class="metric-row total-row">
+            <span class="metric-label">តម្លៃដើមសរុប</span>
+            <span class="metric-value total">{{ formatCurrency(soldCostBySize.L) }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Free Products: Unified Cards (Count + Cost + Total in one) -->
+    <div class="stats-grid free-grid">
+      <!-- S Card -->
+      <div class="unified-card bg-info free-card">
+        <div class="card-header">
+          <i class="fas fa-gift"></i>
+          <span class="size-label">S (តូច)</span>
+          <span class="badge-free">ឥតគិតថ្លៃ</span>
+        </div>
+        <div class="card-body">
+          <div class="metric-row">
+            <span class="metric-label">ចំនួន</span>
+            <span class="metric-value">{{ freeBySize.S }}</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">តម្លៃដើម/ឯកតា</span>
+            <span class="metric-value">{{ formatCurrency(freeBySize.S > 0 ? freeCostBySize.S / freeBySize.S : 0) }}</span>
+          </div>
+          <div class="metric-row total-row">
+            <span class="metric-label">តម្លៃដើមសរុប</span>
+            <span class="metric-value total">{{ formatCurrency(freeCostBySize.S) }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- M Card -->
+      <div class="unified-card bg-primary free-card">
+        <div class="card-header">
+          <i class="fas fa-gift"></i>
+          <span class="size-label">M (មធ្យម)</span>
+          <span class="badge-free">ឥតគិតថ្លៃ</span>
+        </div>
+        <div class="card-body">
+          <div class="metric-row">
+            <span class="metric-label">ចំនួន</span>
+            <span class="metric-value">{{ freeBySize.M }}</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">តម្លៃដើម/ឯកតា</span>
+            <span class="metric-value">{{ formatCurrency(freeBySize.M > 0 ? freeCostBySize.M / freeBySize.M : 0) }}</span>
+          </div>
+          <div class="metric-row total-row">
+            <span class="metric-label">តម្លៃដើមសរុប</span>
+            <span class="metric-value total">{{ formatCurrency(freeCostBySize.M) }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- L Card -->
+      <div class="unified-card bg-secondary free-card">
+        <div class="card-header">
+          <i class="fas fa-gift"></i>
+          <span class="size-label">L (ធំ)</span>
+          <span class="badge-free">ឥតគិតថ្លៃ</span>
+        </div>
+        <div class="card-body">
+          <div class="metric-row">
+            <span class="metric-label">ចំនួន</span>
+            <span class="metric-value">{{ freeBySize.L }}</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">តម្លៃដើម/ឯកតា</span>
+            <span class="metric-value">{{ formatCurrency(freeBySize.L > 0 ? freeCostBySize.L / freeBySize.L : 0) }}</span>
+          </div>
+          <div class="metric-row total-row">
+            <span class="metric-label">តម្លៃដើមសរុប</span>
+            <span class="metric-value total">{{ formatCurrency(freeCostBySize.L) }}</span>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="stats-grid">
@@ -291,5 +466,158 @@ function clearFilters() {
     width: 100%;
     justify-content: center;
   }
+}
+
+/* Unified Card Styles */
+.unified-card {
+  background: white;
+  border-radius: 12px;
+  padding: 1.25rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  border: 1px solid #e2e8f0;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.unified-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.unified-card.bg-info {
+  border-top: 4px solid #0ea5e9;
+}
+
+.unified-card.bg-primary {
+  border-top: 4px solid #6366f1;
+}
+
+.unified-card.bg-secondary {
+  border-top: 4px solid #64748b;
+}
+
+.unified-card.free-card {
+  background: linear-gradient(135deg, #fdf4ff 0%, #ffffff 100%);
+  border-top-color: #db2777;
+}
+
+.unified-card.free-card.bg-info {
+  border-top: 4px solid #db2777;
+}
+
+.unified-card.free-card.bg-primary {
+  border-top: 4px solid #db2777;
+}
+
+.unified-card.free-card.bg-secondary {
+  border-top: 4px solid #db2777;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.card-header i {
+  font-size: 1.25rem;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: #f0f9ff;
+  color: #0284c7;
+}
+
+.unified-card.free-card .card-header i {
+  background: #fce7f3;
+  color: #db2777;
+}
+
+.size-label {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #1e293b;
+  flex: 1;
+}
+
+.badge-sold,
+.badge-free {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 20px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.badge-sold {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.badge-free {
+  background: #fce7f3;
+  color: #be185d;
+}
+
+.card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.metric-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px dashed #e2e8f0;
+}
+
+.metric-row:last-child {
+  border-bottom: none;
+}
+
+.metric-label {
+  font-size: 0.85rem;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.metric-value {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #1e293b;
+  font-family: monospace;
+}
+
+.metric-value.total {
+  font-size: 1.1rem;
+  color: #15803d;
+}
+
+.free-card .metric-value.total {
+  color: #be185d;
+}
+
+.total-row {
+  background: #f0fdf4;
+  margin: 0 -1.25rem;
+  padding: 0.75rem 1.25rem;
+  border-radius: 0 0 12px 12px;
+}
+
+.free-card .total-row {
+  background: #fdf2f8;
+}
+
+.sold-grid,
+.free-grid {
+  margin-top: 1.5rem;
 }
 </style>

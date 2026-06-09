@@ -113,6 +113,14 @@ const totals = computed(() => {
           (sum, item) => sum + (item.unitPrice || 0) * item.quantity,
           0,
         )
+        const itemsCost = order.items.reduce(
+          (sum, item) => sum + (Number(item.costPrice || item.cost_price || 0) * Number(item.quantity || 1)),
+          0,
+        )
+        const freeItemsCost = (order.freeItems || []).reduce(
+          (sum, item) => sum + (Number(item.costPrice || item.cost_price || 0) * Number(item.quantity || 1)),
+          0,
+        )
         const deliveryCost = Number(order.deliveryCost) || 0
         const plasticBagCost = getPlasticBagCost(order)
         const caseBoxUnitCost = stockStore.getMaterialUnitCost('កេស', 'N/A')
@@ -120,12 +128,14 @@ const totals = computed(() => {
 
         const netIncome = Math.max(
           0,
-          productTotal - deliveryCost - plasticBagCost - caseBoxCost
+          productTotal - itemsCost - freeItemsCost - deliveryCost - plasticBagCost - caseBoxCost
         )
 
         acc.items += itemCount
         acc.productTotal += productTotal
         acc.netIncome += netIncome
+        acc.itemsCost += itemsCost
+        acc.freeItemsCost += freeItemsCost
         acc.plasticBagCost += plasticBagCost
         acc.caseBoxCost += caseBoxCost
         acc.deliveryCost += deliveryCost
@@ -136,6 +146,8 @@ const totals = computed(() => {
       items: 0,
       productTotal: 0,
       netIncome: 0,
+      itemsCost: 0,
+      freeItemsCost: 0,
       plasticBagCost: 0,
       caseBoxCost: 0,
       deliveryCost: 0,
@@ -152,6 +164,14 @@ function getOrderBreakdown(order) {
     (sum, item) => sum + (item.unitPrice || 0) * item.quantity,
     0,
   )
+  const itemsCost = order.items.reduce(
+    (sum, item) => sum + (Number(item.costPrice || item.cost_price || 0) * Number(item.quantity || 1)),
+    0,
+  )
+  const freeItemsCost = (order.freeItems || []).reduce(
+    (sum, item) => sum + (Number(item.costPrice || item.cost_price || 0) * Number(item.quantity || 1)),
+    0,
+  )
   const deliveryCost = Number(order.deliveryCost || order.delivery_cost || 0)
   const plasticBagCost = getPlasticBagCost(order)
   const caseBoxQty = Number(order.caseBoxQty || order.case_box_qty || 0)
@@ -160,11 +180,13 @@ function getOrderBreakdown(order) {
 
   const netIncome = Math.max(
     0,
-    productTotal - deliveryCost - plasticBagCost - caseBoxCost
+    productTotal - itemsCost - freeItemsCost - deliveryCost - plasticBagCost - caseBoxCost
   )
 
   return {
     productTotal,
+    itemsCost,
+    freeItemsCost,
     deliveryCost,
     plasticBagCost,
     caseBoxCost,
@@ -356,10 +378,18 @@ async function completeOrder(id) {
       0
     )
     const deliveryCost = Number(order.deliveryCost || 0)
-    const totalCostPrice = order.items.reduce(
+
+    const itemsCostPrice = order.items.reduce(
       (sum, item) => sum + (Number(item.costPrice || 0) * Number(item.quantity || 1)),
       0
     )
+
+    const freeItemsCostPrice = (order.freeItems || []).reduce(
+      (sum, item) => sum + (Number(item.costPrice || 0) * Number(item.quantity || 1)),
+      0
+    )
+
+    const totalCostPrice = itemsCostPrice + freeItemsCostPrice
 
     // Calculate plastic bag cost from bags array
     const plasticBags = order.plasticBags || []

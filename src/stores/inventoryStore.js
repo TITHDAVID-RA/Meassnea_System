@@ -66,14 +66,14 @@ export const useInventoryStore = defineStore('inventory', () => {
         id: movementId,
         product_id: data.productId,
         product_name: data.productName,
-        type: allowedType,                                                     // Guaranteed safe type string
+        type: allowedType,
         quantity: Number(data.quantity),
-        previous_quantity: data.previousQuantity !== undefined ? Number(data.previousQuantity) : null, // Prevent 'undefined' error
-        new_quantity: data.newQuantity !== undefined ? Number(data.newQuantity) : null,             // Prevent 'undefined' error
+        previous_quantity: data.previousQuantity !== undefined ? Number(data.previousQuantity) : null,
+        new_quantity: data.newQuantity !== undefined ? Number(data.newQuantity) : null,
         unit_price: data.unitPrice !== undefined ? Number(data.unitPrice) : 0,
         total_value: data.totalValue !== undefined ? Number(data.totalValue) : 0,
-        reference: data.reference || null,                                     // Prevent 'undefined' error
-        reference_id: data.referenceId || null,                                 // Prevent 'undefined' error
+        reference: data.reference || null,
+        reference_id: data.referenceId || null,
         notes: data.notes || '',
         movement_date: now.toISOString()
       }

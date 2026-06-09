@@ -1,10 +1,9 @@
 PRAGMA foreign_keys = OFF;
+
 -- 1. First, drop child tables that depend on others
 DROP TABLE IF EXISTS order_items;
 DROP TABLE IF EXISTS inventory_movements;
 DROP TABLE IF EXISTS material_transactions;
-DROP TABLE IF EXISTS material_stock;
-DROP TABLE IF EXISTS purchase_orders;
 
 -- 2. Next, drop intermediate tables
 DROP TABLE IF EXISTS orders;
@@ -15,4 +14,9 @@ DROP TABLE IF EXISTS materials;
 DROP TABLE IF EXISTS incomes;
 DROP TABLE IF EXISTS expenses;
 DROP TABLE IF EXISTS assets;
+DROP TABLE IF EXISTS purchase_orders;
+DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS categories;
+DROP TABLE IF EXISTS app_settings;
+
 PRAGMA foreign_keys = ON;

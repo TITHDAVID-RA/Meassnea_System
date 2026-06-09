@@ -206,17 +206,6 @@ export const useOrderStore = defineStore('orders', () => {
           const netProfit = itemsTotal - totalCostPrice - totalPlasticBagCost - totalCaseBoxCost - deliveryCost
           const incomeAmount = Number(Math.max(0, netProfit).toFixed(2))
 
-          console.log('=== ផ្ទៀងផ្ទាត់ការគណនា Meassnea ថ្មី ===')
-          console.log('តម្លៃទំនិញសុទ្ធ (Items Total):', itemsTotal)
-          console.log('តម្លៃដើមផលិតផលសរុប (Total Cost Price):', totalCostPrice)
-          plasticBags.forEach(bag => {
-            const unitCost = stockStore.getMaterialUnitCost('ថង់', bag.size)
-            console.log(`ថ្លៃថង់ ${bag.size} (Plastic Bag ${bag.size} Cost):`, (bag.qty || 0) * unitCost)
-          })
-          console.log('ថ្លៃកេសសរុប (Total Case Box Cost):', totalCaseBoxCost)
-          console.log('ថ្លៃដឹកដកចេញ (Delivery Cost Deducted):', deliveryCost)
-          console.log('ប្រាក់ចំណេញសុទ្ធ (Net Profit):', incomeAmount)
-
           await incomeStore.addIncome({
             date: now,
             amount: incomeAmount,

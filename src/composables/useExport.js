@@ -14,7 +14,10 @@ export function useExcelExport() {
     if (!dateValue) return ''
     const d = new Date(dateValue)
     if (isNaN(d.getTime())) return dateValue
-    return d.toLocaleDateString('km-KH', { year: 'numeric', month: '2-digit', day: '2-digit' })
+    const day = String(d.getDate()).padStart(2, '0')
+    const month = String(d.getMonth() + 1).padStart(2, '0')
+    const year = d.getFullYear()
+    return `${day}/${month}/${year}`
   }
 
   function formatCurrency(amount) {
